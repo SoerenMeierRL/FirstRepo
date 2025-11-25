@@ -1,0 +1,410 @@
+---
+title: "Tutorial: Working with Spatial Objects in R"
+subtitle: "A Hands-On Guide to sf and terra Packages"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    highlight: tango
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = "true", warning = FALSE, message = FALSE)
+```
+
+# Introduction
+
+Welcome to this tutorial on working with spatial objects in R! In this exercise, you'll learn how to:
+
+-   Load and visualize spatial data
+-   Work with `sf` (simple features) objects
+-   Transform coordinate reference systems (CRS)
+-   Create and manipulate spatial points and polygons
+-   Extract values from raster data
+-   Combine different spatial datasets
+
+We'll use the fascinating case study of Bigfoot sightings across North America to explore these spatial analysis techniques!
+
+------------------------------------------------------------------------
+
+## Key Functions Reference
+
+| Task             | Function              | Package       |
+|------------------|-----------------------|---------------|
+| Read CSV         | `read.csv()`          | base R        |
+| Create sf object | `st_as_sf()`          | sf            |
+| Transform CRS    | `st_transform()`      | sf            |
+| Extract geometry | `st_geometry()`       | sf            |
+| Get coordinates  | `st_coordinates()`    | sf            |
+| Check CRS        | `st_crs()` or `crs()` | sf/terra      |
+| Read raster      | `rast()`              | terra         |
+| Crop raster      | `crop()`              | terra         |
+| Mask raster      | `mask()`              | terra         |
+| Transform raster | `project()`           | terra         |
+| Extract values   | `extract()`           | terra         |
+| Get country data | `ne_countries()`      | rnaturalearth |
+
+------------------------------------------------------------------------
+
+# Part 1: Loading Required Packages
+
+First, let's load the necessary packages for spatial analysis.
+
+```{r load-packages}
+# Load required packages for spatial analysis
+library(sf)  # For vector spatial data (simple features)
+library(terra)  # For raster spatial data
+library(rnaturalearth)  # For accessing Natural Earth map data
+library(rnaturalearthdata)
+library(tidyverse)  # For data manipulation and visualization
+```
+
+**HINT:** The packages you need are: `sf`, `terra`, `rnaturalearth`, and `tidyverse`
+
+------------------------------------------------------------------------
+
+# Part 2: Loading and Exploring Point Data
+
+## 2.1 Loading Data from an Online Source
+
+Let's load Bigfoot sighting data from an online repository.
+
+```{r load-data}
+# URL for Bigfoot sightings data
+Bigfoot.URL <- "https://opendata.arcgis.com/datasets/9947fc49e6c44120b4a1b3133c073dbc_0.csv"
+
+# Load the CSV file
+Bigfoot.dta <- read.csv(Bigfoot.URL)
+
+# View the first few rows
+head(Bigfoot.dta)
+```
+
+**TASK:** Fill in the function to read CSV files and the function to view the first 6 rows.
+
+## 2.2 Creating Your First Spatial Plot
+
+Let's visualize the Bigfoot sightings as a simple scatter plot.
+
+```{r first-plot}
+# Create a scatter plot of the sighting locations
+plot(Bigfoot.dta[, c("Lon", "Lat")],  # Select longitude and latitude columns
+     pch = 19,     # Use filled circles (19)
+     col = "red")   # Use red color
+```
+
+**TASK:** Fill in the plotting function, the column names for longitude and latitude, the point character code for filled circles, and choose a color.
+
+------------------------------------------------------------------------
+
+# Part 3: Working with Polygon Data
+
+## 3.1 Loading World Map Data
+
+Now let's add geographical context by loading a world map.
+
+```{r load-world-map}
+# Get world map from Natural Earth at medium scale
+wrld_simpl <- rnaturalearth::ne_countries(type = "countries", 
+                                    scale = "medium")
+
+# Check the class of the object
+class(wrld_simpl)
+
+# Plot the world map
+plot(wrld_simpl)
+
+# Check the structure
+str(wrld_simpl)
+```
+
+**TASK:** Fill in the function name to get country data and its arguments, plus functions to check class, plot, and summarize the object.
+
+## 3.2 Subsetting Spatial Data
+
+Let's extract only North American countries from the world map.
+
+```{r subset-north-america}
+# Filter for Canada, USA, and Mexico
+NoAmPoly <- wrld_simpl %>%
+  filter(name %in% c("Canada", "United States of America", "Mexico"))
+
+# Check the country names
+NoAmPoly$name
+
+# Plot only the geometry (outlines)
+plot(NoAmPoly$geometry)
+```
+
+**TASK:** Fill in the filtering function, the column name containing country names, and the function to extract geometry from sf objects.
+
+## 3.3 Overlaying Points on Polygons
+
+Now let's combine our point data with the polygon map.
+
+```{r overlay-plot}
+# First, plot the Bigfoot sightings
+plot(Bigfoot.dta[, c("Lon", "Lat")],
+     pch = 19,
+     col = "red")
+
+# Add the North America polygon on top
+plot(NoAmPoly$geometry,
+     add = TRUE,      # Add to existing plot
+     col = NA)       # No fill color (NA)
+```
+
+**TASK:** Fill in the function to extract geometry, the argument to add to an existing plot, and the color value for no fill.
+
+------------------------------------------------------------------------
+
+# Part 4: Coordinate Reference Systems (CRS)
+
+## 4.1 Understanding and Transforming Projections
+
+Maps can be distorted depending on their projection. Let's reproject our data to Albers Equal Area for North America.
+
+```{r transform-crs}
+# Define the Albers Equal Area projection for North America
+AEA.proj <- "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs"
+
+# Transform the world map to Albers projection
+wrld_simpl.AEA <- st_transform(wrld_simpl, 
+                        crs = AEA.proj)
+
+# Transform North America polygon
+NoAmPoly.AEA <- st_transform(NoAmPoly, crs = AEA.proj)
+
+# Check the new CRS
+st_crs(NoAmPoly.AEA)
+```
+
+**TASK:** Fill in the function name for transforming CRS, its arguments, and the function to check the CRS of an object.
+
+## 4.2 Plotting with the New Projection
+
+```{r plot-transformed}
+# Plot the transformed North America
+plot(NoAmPoly.AEA$geometry,
+     col = "lightgrey")
+```
+
+------------------------------------------------------------------------
+
+# Part 5: Converting Data Frames to Spatial Objects
+
+## 5.1 Creating sf Point Objects
+
+Let's convert our Bigfoot data frame into a proper spatial object.
+
+```{r create-sf-points}
+# Convert data frame to sf POINT object
+Bigfoot.SpaPnt <- st_as_sf(Bigfoot.dta,
+                        coords = c("Lon", "Lat"),  # Column names for coordinates
+                        crs = 4326)                 # WGS84 CRS code
+
+# Check the class
+class(Bigfoot.SpaPnt)
+
+# Check the CRS
+st_crs(Bigfoot.SpaPnt)
+```
+
+**TASK:** Fill in the function to create sf objects from data frames, specify the argument for coordinate columns, provide longitude and latitude column names, the argument for CRS, and functions to check class and CRS.
+
+## 5.2 Transforming Point Data
+
+Now transform the points to match our Albers projection.
+
+```{r transform-points}
+# Transform Bigfoot sightings to Albers Equal Area
+Bigfoot.SpaPnt.AEA <- st_transform(Bigfoot.SpaPnt,
+                            crs = AEA.proj)
+
+# Plot North America polygon
+plot(st_geometry(NoAmPoly.AEA), col = "lightgrey")
+
+# Add transformed Bigfoot points
+plot(Bigfoot.SpaPnt.AEA$geometry,
+     add = TRUE,
+     pch = 19,
+     col = "red",
+     cex = 0.5)
+```
+
+**TASK:** Fill in the transformation function and its arguments, the function to extract geometry, and the argument to add to existing plot.
+
+------------------------------------------------------------------------
+
+# Part 6: Working with Raster Data
+
+## 6.1 Loading Raster Data
+
+Let's load climate data (WorldClim bioclimatic variables) to understand Bigfoot's environmental preferences.
+
+```{r load-raster}
+# Load WorldClim bioclimatic variables
+WC.Bioclim <- rast(x = "wc2.1_10m_bio_1.tif")
+
+# Check the raster properties
+rast(WC.Bioclim)
+
+# Check the CRS
+st_crs(WC.Bioclim)
+
+# Get the number of layers
+nlyr(WC.Bioclim)
+```
+
+**TASK:** Fill in the function to read raster data, functions to print info, check CRS, and count layers.
+
+## 6.2 Cropping and Masking Raster Data
+
+Let's crop the global climate data to just North America.
+
+```{r crop-raster}
+# First, transform North America polygon to match raster CRS
+NoAmPoly.WGS84 <- st_transform(NoAmPoly, crs = 4326)
+
+# Crop raster to North America extent
+NoAm.WC.Bioclim <- crop(WC.Bioclim,
+                         NoAmPoly.WGS84)
+
+
+# Mask to North America shape
+NoAm.WC.Bioclim <- mask(NoAm.WC.Bioclim,
+                         NoAmPoly.WGS84)
+
+# Plot the first layer (Annual Mean Temperature)
+plot(NoAm.WC.Bioclim[[1]])  # Select layer 1
+```
+
+**TASK:** Fill in the CRS code for WGS84, the functions to crop and mask rasters with their arguments, and the index for the first layer.
+
+## 6.3 Transforming Raster Projections
+
+Now let's reproject our raster to Albers Equal Area.
+
+```{r transform-raster}
+# Transform raster to Albers projection
+#NoAm.WC.Bioclim.AEA <- project(NoAm.WC.Bioclim,AEA.proj,
+#filename="wc2.1_10m_bio_1_proj.tif",overwrite=TRUE)
+
+NoAm.WC.Bioclim.AEA <- rast("wc2.1_10m_bio_1_Proj.tif")
+
+# Plot the transformed raster
+plot(NoAm.WC.Bioclim.AEA[[1]])
+plot(st_geometry(NoAmPoly.AEA), add = TRUE)
+```
+
+**TASK:** Fill in the function to transform (project) rasters and its arguments, and the function to extract polygon geometry.
+
+------------------------------------------------------------------------
+
+# Part 7: Extracting Raster Values at Point Locations
+
+## 7.1 Extract Climate Data for Bigfoot Sightings
+
+Let's find out what climate conditions Bigfoot prefers!
+
+```{r extract-values}
+# Extract bioclimatic values at Bigfoot sighting locations
+BFC <- terra::extract(WC.Bioclim,
+                    Bigfoot.SpaPnt)
+?terra:extract
+# View the first few rows
+head(BFC)
+
+# Check dimensions
+str(BFC)
+```
+
+**TASK:** Fill in the function to extract raster values at point locations, its arguments (raster and points), and functions to view and check dimensions.
+
+## 7.2 Identifying Missing Data
+
+Check if any sightings are missing environmental data.
+
+```{r check-na}
+# Find rows with NA values using apply
+rows_with_na <- apply(BFC,
+      2,  # Apply to columns
+      function(x) { which(is.na(x)) })
+
+print(rows_with_na)
+```
+
+**TASK:** Fill in the function to apply operations across margins, its arguments for the data, margin, and function, plus dplyr functions for row numbering and filtering.
+
+## 7.3 Visualizing Points with Missing Data
+
+```{r plot-missing}
+# Plot North America
+plot(st_geometry(NoAmPoly.AEA), 
+     col = "lightgrey",
+     xlim = range(st_coordinates(Bigfoot.SpaPnt.AEA)[, 1]),
+     ylim = range(st_coordinates(Bigfoot.SpaPnt.AEA)[, 2]))
+
+# Add all Bigfoot sightings in red
+plot(st_geometry(Bigfoot.SpaPnt.AEA),
+     add = TRUE,
+     pch = 19,
+     col = "red",
+     cex = 0.5)
+
+# Highlight points with missing data in black
+plot(st_geometry(Bigfoot.SpaPnt.AEA[c(3595, 3682), ]),
+     add = TRUE,
+     pch = 19,
+     col = "black",
+     cex = 1.5)
+```
+
+**TASK:** Fill in the function to extract coordinates from sf objects, the object name for transformed Bigfoot points, and the row numbers with missing data.
+
+------------------------------------------------------------------------
+
+# Part 8: Advanced Visualization with ggplot2
+
+## 8.1 Creating a Publication-Quality Map
+
+```{r ggplot-map}
+# Load additional package for raster visualization in ggplot2
+library(tidyterra)
+
+# Create a comprehensive map
+ggplot() +
+  # Add raster layer (temperature)
+  geom_spatraster(data = NoAm.WC.Bioclim.AEA[[1]] / 10) +
+  
+  # Add North America polygon
+  geom_sf(data = NoAmPoly.AEA, fill = NA, color = "black") +
+  
+  # Add Bigfoot sightings
+  geom_sf(data = Bigfoot.SpaPnt.AEA, color = "red", size = 2) +
+  
+  # Customize color scale
+  scale_fill_whitebox_c(
+    palette = "muted",
+    labels = scales::label_number(suffix = "°C"),
+    n.breaks = 12
+  ) +
+  
+  # Add title and theme
+  ggtitle("Bigfoot Sightings and Annual Mean Temperature") +
+  theme_minimal() +
+  
+  # Set coordinate limits
+  coord_sf(xlim = range(st_coordinates(Bigfoot.SpaPnt.AEA)[, 1]),
+             ylim = range(st_coordinates(Bigfoot.SpaPnt.AEA)[, 2])) +
+  
+  # Add axis labels
+  labs(x = "Longitude", y = "Latitude")
+```
+
+**TASK:** Fill in the geom functions for rasters (`geom_spatraster`), polygons (`geom_sf`), and points, plus functions for title (`ggtitle`), theme (`theme_minimal`), and coordinate system (`coord_sf` with `xlim` and `ylim` arguments).
+
+------------------------------------------------------------------------

@@ -1,0 +1,799 @@
+---
+title: "Handling LiDAR Data in R"
+subtitle: "A Practical Guide to Point Cloud Processing and Vegetation Analysis"
+author: "Søren Meier"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cosmo
+    highlight: tango
+    code_folding: show
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = 'center',
+  fig.width = 10,
+  fig.height = 8
+)
+```
+
+------------------------------------------------------------------------
+
+# Introduction
+
+## Learning Objectives
+
+By the end of this tutorial, you will be able to:
+
+-   Load and visualize LiDAR point cloud data in R
+-   Understand LiDAR data structure and attributes
+-   Filter point clouds based on classification
+-   Normalize point cloud heights to ground level
+-   Create Digital Terrain Models (DTM) and Canopy Height Models (CHM)
+-   Calculate vegetation structure metrics
+-   Extract ecological information at different spatial resolutions
+-   Analyze vegetation stratification and canopy density
+
+## Background on LiDAR
+
+**LiDAR** (Light Detection and Ranging) is an active remote sensing technology that measures distances by illuminating targets with laser pulses and analyzing the reflected light. Airborne Laser Scanning (ALS) systems mounted on aircraft or drones can collect millions of precise 3D points representing the Earth's surface and features on it.
+
+### Key Advantages of LiDAR:
+
+-   **3D Information**: Captures vertical structure of vegetation
+-   **High Precision**: Centimeter-level accuracy
+-   **Penetration**: Can penetrate vegetation canopy to reach ground
+-   **Multiple Returns**: One laser pulse can have multiple returns (e.g., canopy top, branches, ground)
+
+### Applications in Ecology:
+
+-   Forest structure assessment
+-   Biomass estimation
+-   Habitat mapping
+-   Biodiversity studies
+-   Carbon stock quantification
+
+## About the lidR Package
+
+The **lidR** package is a comprehensive R toolkit for airborne LiDAR data manipulation and visualization. Created by Jean-Romain Roussel, it provides tools for:
+
+-   Reading and writing LAS/LAZ files
+-   3D visualization
+-   Ground classification
+-   Digital elevation model generation
+-   Tree detection and segmentation
+-   Metrics calculation
+
+**Documentation**: <https://r-lidar.github.io/lidRbook/>
+
+------------------------------------------------------------------------
+
+# Setup and Data Preparation
+
+## Installing Required Packages
+
+```{r install, eval=FALSE}
+# Install packages if not already installed -> they are already installed on Posit Cloud
+#install.packages("____")  # Point cloud processing
+#install.packages("____")  # Raster operations  
+#install.packages("____")  # Plotting
+#install.packages("____")  # Spatial features
+```
+
+## Loading Libraries
+
+```{r load_packages}
+# Load required libraries
+library(lidR)  # LiDAR processing
+library(raster)  # Raster operations
+library(ggplot2)  # Advanced plotting
+library(sf)   # Spatial features
+```
+
+## About the Dataset
+
+You'll work with Airborne Laser Scanning (ALS) data from Aarhus University campus in Denmark. The data is in **LAZ format** (compressed LAS), which is a standard format for storing LiDAR point clouds.
+
+**Data Source**: Danish Agency for Data Supply and Infrastructure\
+**Coverage**: University Park, Aarhus (1 km × 1 km tile)\
+**Free Download**: <https://dataforsyningen.dk/data/3931>
+
+**Question 1**: What is the difference between LAS and LAZ file formats?
+
+Las contains point cloud data obtained via LiDAR. LAZ contains the exact same data, but is compressed to save space and be easilier transferred.
+
+------------------------------------------------------------------------
+
+# Exercise 1: Loading and Exploring LiDAR Data
+
+## Loading the Point Cloud
+
+The `readLAS()` function loads LiDAR data into R as a LAS object.
+
+```{r load_data}
+# Load the LiDAR data
+Unipark <- readLAS("PUNKTSKY_1km_6225_574_unipark.laz")
+```
+
+## Understanding LAS Object Structure
+
+LAS objects have two main components: - @header: Metadata about the point cloud (extent, CRS, point counts, etc.) - @data: The actual point data (X, Y, Z coordinates and attributes)
+
+```{r explore_structure}
+# Examine the header information
+Unipark@header
+
+# Examine the data table
+Unipark@data
+
+# Get a summary of the point cloud
+summary(Unipark)
+```
+
+**Question 2**: What information is stored in the @header vs @data?
+
+Header: Number of observations, geographical extent of observations, CRS. Scale factor: the inverse of how much the observations are scaled to save storage space - example: the value 1,23 is saved as the integer 123 to save space (integers are more efficient than floats) with the scale factor of 0,01.
+
+Data: information about the data points - variable names, classes, and the value of the observations for each variable (only shows first and last 5 observations). Some variables: number of returns, scanning angle
+
+## Counting Points
+
+```{r count_points}
+# Method 1: Using length() on X coordinate
+length(Unipark@data$X)
+
+# Method 2: Direct access (simpler)
+length(Unipark$X)
+
+# Alternative: Using nrow() to count rows
+nrow(Unipark)
+```
+
+**Question 3**: How many points does this LiDAR dataset contain?
+
+1934412 points
+
+## Analyzing Z-Value Distribution
+
+The Z coordinate represents elevation. Let's explore its distribution.
+
+```{r analyze_z}
+# Basic histogram using base R
+hist(Unipark$Z,
+     xlab = "Elevation",
+     main = "Distribution of Elevation Values",
+     col = "skyblue",
+     border = "white"
+)
+
+# Create a data frame for ggplot
+uni_df <- data.frame(
+  x = Unipark$X,
+  y = Unipark$Y,
+  z = Unipark$Z
+)
+
+# Advanced histogram using ggplot2
+ggplot(data = uni_df, aes(x = z)) +
+  geom_histogram(fill = "steelblue", 
+                 color = "white", 
+                 bins = 50) +
+  labs(
+    title = "Distribution of Z Values",
+    x = "Elevation (m)",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+range(Unipark$Z)
+```
+
+**Question 4**: What is the range of Z values in the dataset? (Check with `range(Unipark$Z)`)
+
+-1.37 to 92.88
+
+**Question 5**: Can we directly use these Z values to determine vegetation height? Why or why not?
+
+No, because we have not taken the ground/terrain into account - we need to know the location of the ground/the terrain and adjust the Z values based on their relationship to the ground
+
+These Z values represent height above sea level - NOT height above ground
+
+--\> We need to identify the ground points and the surface points in the point cloud –\> make a digital terrain model and a digital surface model –\> subtract the digital terrain model from the surface model (called normalization) –\> obtain canopy height model, whichis the actual vegetation height
+
+------------------------------------------------------------------------
+
+# Exercise 2: Visualizing and Filtering Point Clouds
+
+## 3D Visualization
+
+*Note: The `plot()` function creates interactive 3D visualizations of point clouds. However, this only works if you run R and RStudio locally on your computer, since Posit Cloud does not have the graphics engine to display these 3D plots. Alternatively, you can plot 2D transects through the point cloud with ggplot2.*
+
+```{r visualize_basic}
+# Basic 3D plot
+# ____(Unipark) # use for 3D plots on your local computer
+```
+
+**Tip**: Use your mouse to rotate, zoom, and pan the 3D view!
+
+*Alternative plot of a point cloud transect with ggplot:*
+
+```{r visualize_basic_transect}
+# Create a LiDAR transect
+p1 <- c(574500, 6225500) # define starting point of transect
+p2 <- c(574700, 6225500) # define ending point of transect
+las_tr <- clip_transect(Unipark, p1, p2, width = 20, xz = TRUE)
+
+# plot transect with ggplot with x on the x-axis, elevation on the y-axis and colored by elevation
+ggplot(payload(las_tr), aes(X,Z, color = Z)) + 
+  geom_point(size = 0.1) + 
+  coord_equal() + 
+  theme_minimal() +
+  scale_color_viridis_c()
+```
+
+## Color by RGB Values
+
+Many LiDAR datasets include RGB color information captured during flight.
+
+```{r visualize_rgb}
+# Colorize by RGB values
+# plot(Unipark, color = "____") # use for 3D plots on your local computer
+```
+
+*Alternative plot of a point cloud transect with ggplot:*
+
+```{r visualize_rgb_transect}
+
+# Create a smaller LiDAR transect
+p1 <- c(574500, 6225500)
+p2 <- c(574700, 6225500)
+las_tr2 <- clip_transect(Unipark, p1, p2, width = 5, xz = TRUE)
+
+# plot transect with ggplot and RGB colors
+color_plot <- rgb(las_tr2$R/65535, las_tr2$G/65535, las_tr2$B/65535) # generate RGB colors; divide by max 16-bit value to scale from 0-1
+ggplot(payload(las_tr2), aes(X,Z, color = color_plot)) + 
+  geom_point(size = 0.3) + 
+  coord_equal() + 
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = color_plot)
+```
+
+## Color by Classification
+
+LiDAR points are classified according to ASPRS (American Society for Photogrammetry & Remote Sensing) standards.
+
+### ASPRS Classification Codes
+
+| Code | Class             | Description            |
+|------|-------------------|------------------------|
+| 1    | Unclassified      | Never classified       |
+| 2    | Ground            | Bare earth and terrain |
+| 3    | Low Vegetation    | \< 0.5 m height        |
+| 4    | Medium Vegetation | 0.5 - 2 m height       |
+| 5    | High Vegetation   | \> 2 m height          |
+| 6    | Building          | Structures             |
+| 7    | Low Point (Noise) | Outliers               |
+| 9    | Water             | Water surfaces         |
+| 18   | High Noise        | Aerial noise           |
+
+**Reference**: [ASPRS LAS 1.4 Specification](https://www.asprs.org/wp-content/uploads/2010/12/LAS_1-4_R6.pdf)
+
+```{r visualize_classification}
+# Colorize by classification
+# plot(Unipark, # use for 3D plots on your local computer
+#      color = ____,
+#      colorPalette = c("yellow", "lightgreen", "green", 
+#                      "darkgreen", "grey", "darkgrey",
+#                      "blue", "lightblue", "white")
+# ) 
+```
+
+*Alternative plot of a point cloud transect with ggplot:*
+
+```{r visualize_classification_transect}
+# plot transect with ggplot and Classification colors
+class <- factor(las_tr2$Classification) # store classification as discrete factors so that discrete colors can be assigned
+ggplot(payload(las_tr2), aes(X,Z, color = class) ) + 
+  geom_point(size = 0.3) + 
+  coord_equal() + 
+  theme_minimal() +
+  scale_color_manual(values = c("grey", "yellow", "lightgreen", "green", 
+                     "darkgreen", "darkgrey","white","lightblue" ))
+```
+
+**Question 6**: Which colors represent vegetation vs. buildings in the plot?
+
+Grey represents buildings
+
+Blue-Green represents varying densities of vegetation
+
+## Exploring Classification Values
+
+```{r explore_classification}
+# Find unique classification values
+unique(Unipark$Classification)
+
+# Count points per class
+table(Unipark$Classification)
+```
+
+## Filtering by Classification
+
+The `filter_poi()` function (Points Of Interest) filters point clouds based on conditions.
+
+```{r filter_classification}
+# Filter ground points (Class 2)
+ground_points <- filter_poi(Unipark, Classification == 2)
+
+subset_i <- seq(0,length(ground_points$X),10) # use every 10th point
+ggplot(payload(ground_points[subset_i]), aes(X,Y, color = Z )) + 
+  geom_point(size = 0.1) + 
+  coord_equal() + 
+  theme_minimal() +
+  scale_color_viridis_c()
+
+# Filter low vegetation (Class 3)
+low_veg <- filter_poi(Unipark, Classification == 3)
+
+ggplot(payload(low_veg), aes(X,Y, color = Z )) + 
+  geom_point(size = 0.1) + 
+  coord_equal() + 
+  theme_minimal() +
+  scale_color_viridis_c()
+
+# Filter medium vegetation (Class 4)
+med_veg <- filter_poi(Unipark, Classification == 4)
+
+ggplot(payload(med_veg), aes(X,Y, color = Z )) + 
+  geom_point(size = 0.1) + 
+  coord_equal() + 
+  theme_minimal() +
+  scale_color_viridis_c()
+
+# Filter high vegetation (Class 5)
+high_veg <- filter_poi(Unipark, Classification == 5)
+
+subset_i <- seq(0,length(high_veg$X),5) # use every 10th point
+ggplot(payload(high_veg[subset_i]), aes(X,Y, color = Z )) + 
+  geom_point(size = 0.1) + 
+  coord_equal() + 
+  theme_minimal() +
+  scale_color_viridis_c()
+
+# Filter buildings (Class 6)
+buildings <- filter_poi(Unipark, Classification == 6)
+
+ggplot(payload(buildings), aes(X,Y, color = Z )) + 
+  geom_point(size = 0.1) + 
+  coord_equal() + 
+  theme_minimal() +
+  scale_color_viridis_c()
+
+# Filter water (Class 9)
+water <- filter_poi(Unipark, Classification == 9)
+
+ggplot(payload(water), aes(X,Y, color = Z )) + 
+  geom_point(size = 0.1) + 
+  coord_equal() + 
+  theme_minimal() +
+  scale_color_viridis_c()
+
+nrow(ground_points)
+```
+
+**Question 7**: How many points are classified as ground? (Use `nrow(ground_points)`)
+
+1037484 ground points
+
+**Question 8**: Which classification contains the most points?
+
+Classification 2, the ground points
+
+(note to self: water does not reflect infrared very well (which this LiDAR uses) + is absorbed)
+
+------------------------------------------------------------------------
+
+# Exercise 3: Height Normalization and DTM/CHM Creation
+
+## Why Normalize Heights?
+
+Raw Z values represent elevation above sea level, not height above ground. To measure vegetation height, we need to normalize the point cloud by subtracting the ground elevation.
+
+**Vegetation Height = Z value - Ground Elevation**
+
+## Creating a Digital Terrain Model (DTM)
+
+A DTM represents the bare earth surface. We'll use a **Triangulated Irregular Network (TIN)** algorithm.
+
+```{r create_dtm}
+# Generate DTM using TIN algorithm
+dtm <- rasterize_terrain(Unipark, 
+            algorithm = tin(),
+            use_class = c(2L, 9L), # use ground and water points to interpolate terrain
+            res = 1)  # 1-meter resolution
+
+# Plot the DTM
+plot(dtm,
+     main = "Digital Terrain Model (DTM)",
+     col = terrain.colors(50)
+)
+```
+
+**Question 9**: What does the DTM represent?
+
+The height above sea level of the terrain - it represents an interpolated model of ground points across the whole observed area
+
+The interpolation (TIN method) is done based on the values of the 3 nearest neighbors.
+
+## Normalizing Point Cloud Heights
+
+The `normalize_height()` function subtracts ground elevation from each point's Z value.
+
+```{r normalize}
+# Normalize heights using the DTM
+norm_height <- normalize_height(Unipark, dtm)
+
+# Compare original vs. normalized heights
+hist(Unipark$Z, 
+     main = "Original Z Values",
+     xlab = "Elevation (m)",
+     col = "coral"
+)
+
+hist(norm_height$Z,
+     main = "Normalized Heights",
+     xlab = "Height above ground (m)",
+     col = "forestgreen"
+)
+
+range(norm_height$Z)
+range(Unipark$Z)
+```
+
+**Question 10**: What is the range of normalized heights? How does this compare to the original Z values?
+
+The range of normalized heights are now -41.41 to 48.59
+
+The original heights were -1.37 to 92.88 and represnet height above sea level. The normalized heights are lower because we have subtracted the DTM from the original heights.
+
+(Note to self: strange ranges, like very negative values are OUTLIERS = noise in the data \| can occur at both negative and positive values)
+
+## Filtering Vegetation Points
+
+Now let's extract only vegetation points (classes 3, 4, 5) with meaningful heights.
+
+```{r filter_vegetation}
+# Filter vegetation: classes 3, 4, 5, and height > 0.5m
+vegetation <- filter_poi(
+  norm_height,
+  Classification %in% c(3, 4, 5) & Z >= 0.5
+)
+
+# Visualize vegetation only
+
+# Create a LiDAR transect
+p1 <- c(574500, 6225500)
+p2 <- c(574700, 6225500)
+las_tr_veg <- clip_transect(vegetation, p1, p2, width = 20, xz = TRUE)
+
+# plot transect with ggplot
+ggplot(payload(las_tr_veg), aes(X,Z, color = Z)) + 
+  geom_point(size = 0.1) + 
+  coord_equal() + 
+  theme_minimal() +
+  scale_color_viridis_c()
+
+# Check how many vegetation points remain
+nrow(Unipark)
+nrow(vegetation)
+nrow(Unipark)-nrow(vegetation)
+```
+
+**Question 11**: How many vegetation points remain after filtering?
+
+627587 points remain after filtering from the original 1934412 points (1306825 points filtered)
+
+## Creating a Canopy Height Model (CHM)
+
+A CHM represents the height of the vegetation canopy above ground.
+
+```{r create_chm}
+# Calculate CHM using 95th percentile of heights in each pixel
+canopy_height <- rasterize_canopy(
+  vegetation,
+  func = quantile(vegetation$Z, probs = 0.95),  # 95th percentile
+  res = 1  # 1-meter resolution
+)
+
+# Plot the CHM
+plot(canopy_height,
+     main = "Canopy Height Model (CHM)",
+     col = colorRampPalette(c("yellow", "green", "darkgreen"))(50)
+)
+```
+
+**Question 12**: Why use the 95th percentile instead of the maximum height?
+
+This is to remove those outliers I mentioned in question 10 - there are only a few outliers, so by using the 95th percentile, we filter them out.
+
+## Finding the Tallest Trees
+
+Let's identify areas with trees taller than 20 meters.
+
+```{r find_tall_trees}
+# Create a mask for trees > 20m
+tall_tree_mask <- canopy_height
+tall_tree_mask[tall_tree_mask < 20] <- NA
+
+# Apply mask to CHM
+tall_trees <- mask(canopy_height, tall_tree_mask) # use function from raster package
+
+# Plot only tall trees
+plot(tall_trees,
+     main = "Trees Taller than 20 meters",
+     col = colorRampPalette(c("orange", "red", "darkred"))(50)
+)
+```
+
+**Question 13**: Where are the tallest trees located in the park? (Describe geographically: north/south/east/west)
+
+Trees above 20 meters seem to be located in a belt from central south to northwest, with the tallest trees located in the south.
+
+------------------------------------------------------------------------
+
+# Exercise 4: Extracting Vegetation Metrics
+
+## Height Metrics
+
+Vegetation structure can be characterized using various height percentiles and summary statistics.
+
+### Mean Height
+
+```{r mean_height}
+# Calculate mean height in 1m grid cells
+h_mean <- grid_metrics(
+  vegetation,
+  func = mean(Z),
+  res = 1
+)
+
+plot(h_mean,
+     main = "Mean Vegetation Height",
+     col = terrain.colors(50)
+)
+```
+
+### Height Percentiles
+
+Percentiles describe the distribution of heights in each grid cell.
+
+```{r height_percentiles}
+# 25th percentile (1st quartile)
+h_25p <- grid_metrics(
+  vegetation,
+  func = quantile(Z, probs = 0.25),
+  res = 1
+)
+
+plot(h_25p, main = "25th Percentile Height")
+
+# 50th percentile (median)
+h_50p <- grid_metrics(
+  vegetation,
+  func = quantile(Z, probs = 0.50),
+  res = 1
+)
+
+plot(h_50p, main = "Median Height")
+
+# 75th percentile (3rd quartile)
+h_75p <- grid_metrics(
+  vegetation,
+  func = quantile(Z, probs = 0.75),
+  res = 1
+)
+
+plot(h_75p, main = "75th Percentile Height")
+
+# 95th percentile (used for CHM)
+h_95p <- grid_metrics(
+  vegetation,
+  func = quantile(Z, probs = 0.95),
+  res = 1
+)
+
+plot(h_95p, main = "95th Percentile Height")
+```
+
+**Question 14**: What does the 25th percentile height tell us about vegetation structure?
+
+It mostly shows where low vegetation can be found - due to it being the 25th percentile, we do not have a lot of information about the other height classes/the whole vegetation structure.
+
+**Question 15**: Which percentile (25th, 50th, 75th, or 95th) best represents the dominant canopy height?
+
+The 75th or 95th percentile best represents the dominant canopy height, as this is where most of the tallest trees can be found
+
+------------------------------------------------------------------------
+
+# Exercise 5: Vegetation Cover and Density Metrics
+
+## Pulse Penetration Ratio
+
+The pulse penetration ratio measures how many laser pulses reached the ground, indicating canopy openness.
+
+**Formula**: Pulse Penetration Ratio = (Ground Points) / (Total Points)
+
+-   **High ratio** (\> 0.5): Open canopy, sparse vegetation
+-   **Low ratio** (\< 0.2): Dense canopy, little ground visibility
+
+```{r pulse_penetration}
+# Define function to calculate ratio
+calc_ratio <- function(z_ground, z_total) {
+  ratio <- z_ground / z_total
+  return(ratio)
+}
+
+# Calculate at 1m resolution
+pulse_pen_1m <- grid_metrics(
+  norm_height,
+  func = calc_ratio(
+    length(Z[Classification == 2]),  # Ground points
+    length(Z)            # Total points
+  ),
+  res = 1
+)
+
+plot(pulse_pen_1m,
+     main = "Pulse Penetration Ratio (1m)",
+     col = colorRampPalette(c("darkgreen", "yellow"))(50)
+)
+```
+
+**Question 16**: What do high vs. low pulse penetration values indicate?
+
+High values indicate sparse/open vegetation, where many laser points can penetrate/hit the ground
+
+Low values indicate closed vegetation (or just buildings), where the laser points are blocked by the vegetation/does not hit the ground
+
+## Vegetation Stratification
+
+Count points in different height layers to understand vertical structure.
+
+```{r stratification}
+# 0-1 meter layer (understory)
+layer_0_1m <- grid_metrics(
+  norm_height,
+  func = sum(Z >= 0 & Z <= 1),
+  res = 1
+)
+
+plot(layer_0_1m, main = "Point Density: 0-1m")
+
+# 1-5 meter layer (shrub layer)
+layer_1_5m <- grid_metrics(
+  norm_height,
+  func = sum(Z >= 1 & Z <= 5),
+  res = 1
+)
+
+plot(layer_1_5m, main = "Point Density: 1-5m")
+
+# 5-10 meter layer (sub-canopy)
+layer_5_10m <- grid_metrics(
+  norm_height,
+  func = sum(Z >= 5 & Z <= 10),
+  res = 1
+)
+
+plot(layer_5_10m, main = "Point Density: 5-10m")
+
+# 10-50 meter layer (canopy)
+layer_10_50m <- grid_metrics(
+  norm_height,
+  func = sum(Z >= 10 & Z <= 50),
+  res = 1
+)
+
+plot(layer_10_50m, main = "Point Density: 10-50m")
+
+
+```
+
+**Question 17**: Which height layer has the most points? What does this tell you about the vegetation structure?
+
+The 0-1m height layer has by far the most points spread across the whole extent.
+
+The vegetation structure is dominated by ground/grass/low vegetation - there may be tall trees, but they do not dominate the vegetation
+
+------------------------------------------------------------------------
+
+# Exercise 6: Multi-Scale Analysis
+
+## Effect of Spatial Resolution
+
+Calculating metrics at different resolutions reveals patterns at different spatial scales.
+
+```{r multiscale}
+# Pulse penetration at 1m resolution (already calculated)
+plot(pulse_pen_1m, main = "Pulse Penetration: 1m Resolution")
+
+# Pulse penetration at 5m resolution
+pulse_pen_5m <- grid_metrics(
+  norm_height,
+  func = calc_ratio(
+    length(Z[Classification == 2]),
+    length(Z)
+  ),
+  res = 5  # 5-meter resolution
+)
+
+plot(pulse_pen_5m, main = "Pulse Penetration: 5m Resolution")
+
+# Pulse penetration at 10m resolution
+pulse_pen_10m <- grid_metrics(
+  norm_height,
+  func = calc_ratio(
+    length(Z[Classification == 2]),
+    length(Z)
+  ),
+  res = 10  # 10-meter resolution
+)
+
+plot(pulse_pen_10m, main = "Pulse Penetration: 10m Resolution")
+```
+
+**Question 18**: How does the pattern change as you increase the resolution from 1m to 10m?
+
+The resolution gets more coarse and you lose some fine-scale detail - individual features can no longer be identified, and only general areas can be seen
+
+**Question 19**: Which resolution is most appropriate for: - Detailed tree-level analysis? - Landscape-level patterns?
+
+1m resolution is the most appropriate for detailed tree-level analysis, as the individual trees and their features can be identified/analysed. 5m resolution could be used, as trees can still be identified.
+
+10m resolution is better for landscape-level patterns, as patterns are aggregated across the whole extent.
+
+------------------------------------------------------------------------
+
+# Advanced Topics (Optional)
+
+## Creating Custom Metrics Functions
+
+You can calculate multiple metrics simultaneously using custom functions.
+
+```{r custom_metrics}
+# Define a function to calculate multiple metrics
+my_metrics <- function(z) {
+  list(
+    mean_height = mean(z),
+    max_height = max(z),
+    sd_height = sd(z),
+    cv_height = sd(z) / mean(z) * 100,  # Coefficient of variation
+    n_points = length(z)
+  )
+}
+
+# Calculate all metrics at once
+all_metrics <- grid_metrics(
+  vegetation,
+  func = ~my_metrics(Z),
+  res = 5
+)
+
+# Plot each metric
+plot(all_metrics, "mean_height", main = "Mean Height (5m)")
+plot(all_metrics, "max_height", main = "Max Height (5m)")
+plot(all_metrics, "sd_height", main = "Height Std Dev (5m)")
+plot(all_metrics, "cv_height", main = "Height CV (5m)")
+```

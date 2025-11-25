@@ -1,0 +1,925 @@
+---
+title: "Tutorial: Spatial Interpolation in R"
+subtitle: "From Point Data to Continuous Surfaces"
+author: "Søren Meier"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: cosmo
+    highlight: tango
+editor_options: 
+  chunk_output_type: console
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, warning = FALSE, message = FALSE, error= TRUE)
+```
+
+# Introduction
+
+**Spatial interpolation** is the process of estimating values at
+unsampled locations based on measurements from sampled locations. This
+is crucial in environmental sciences where we often have point
+measurements (weather stations, soil samples) but need continuous
+surfaces for analysis.
+
+## What You'll Learn
+
+In this tutorial, you will:
+
+-   Load and visualize point data (weather stations)
+-   Understand different interpolation methods
+-   Implement **Inverse Distance Weighting (IDW)**
+-   Apply **Thin Plate Splines (TPS)**
+-   Perform **Kriging** (geostatistical interpolation)
+-   Compare interpolation methods using cross-validation
+-   Create ensemble predictions
+
+## The Dataset
+
+We'll use weather station data from Denmark (DMI - Danish Meteorological
+Institute), focusing on **Mean Annual Temperature (MAT)**. The data
+includes:
+
+-   Station locations (latitude, longitude, elevation)
+-   Climate measurements (temperature, precipitation)
+-   200+ weather stations across Denmark
+
+## Essential Functions Reference
+
+| Task | Function | Package | Key Arguments |
+|----|----|----|----|
+| Read CSV | `read.csv()` | base | url/file |
+| Create sf | `st_as_sf()` | sf | data, coords, crs |
+| Transform CRS | `st_transform()` | sf | object, crs |
+| Create raster | `rast()` | terra | object, res |
+| Mask raster | `mask()` | terra | x, mask |
+| IDW | `idw()` | gstat | formula, locations, newdata, nmax, idp |
+| TPS | `Tps()` | fields | x, Y |
+| Variogram | `variogram()` | gstat | object, cutoff |
+| Fit variogram | `autofitVariogram()` | automap | formula, input_data, model |
+| Kriging | `krige()` | gstat | formula, locations, newdata, model |
+| Auto kriging | `autoKrige()` | automap | formula, input_data, new_data |
+| Cross-validation | `krige.cv()` | gstat | formula, locations, nfold, model |
+| K-fold | `kfold()` | dismo | x, k |
+
+## Common Issues and Solutions
+
+**Geometry Errors**: If you encounter errors like "Loop is not valid" or
+"duplicate vertex", use `st_make_valid()` to fix invalid geometries in
+spatial objects before operations like cropping or intersecting.
+
+``` r
+# Fix invalid geometries
+my_spatial_object <- st_make_valid(my_spatial_object)
+```
+
+------------------------------------------------------------------------
+
+# Part 1: Loading and Exploring Point Data
+
+## 1.1 Load Required Packages
+
+```{r load-packages}
+# Spatial data handling
+library(sf)     # Simple features for vector data
+library(terra)     # Raster/vector operations
+library(gstat)     # Spatial statistics and Kriging
+
+# Data manipulation and visualization
+library(dplyr)     # Data wrangling
+library(ggplot2)     # Visualization
+library(tidyterra)     # Visualizing rasters with ggplot2
+
+# Mapping
+library(rnaturalearth)     # Natural Earth map data
+
+# Specialized interpolation
+library(fields)     # Thin plate splines
+library(dismo)     # Cross-validation
+library(sp)     # Spatial classes (older format)
+library(automap)     # Automatic variogram fitting
+library(raster)     # Convert between raster formats
+```
+
+**HINT:** Packages are: `sf`, `terra`, `gstat`, `dplyr`, `ggplot2`,
+`tidyterra`, `rnaturalearth`, `fields`, `dismo`, `sp`, `automap`,
+`raster`
+
+## 1.2 Load Weather Station Data
+
+```{r load-data}
+# Load weather station data from online source
+DMI.Stations <- read.csv("https://raw.githubusercontent.com/AlejoOrdonez/StaGeoMod2021/main/StationsWithClim.csv")
+
+# View variable names
+names(DMI.Stations)
+
+# Check dimensions
+dim(DMI.Stations)
+
+# View first few rows
+head(DMI.Stations)
+```
+
+**TASK:** Fill in functions to read CSV from URL, view names,
+dimensions, and first rows.
+
+## 1.3 Convert to Spatial Object
+
+```{r create-sf}
+# Convert data frame to sf POINT object
+DMI.Stations.Shp <- st_as_sf(DMI.Stations,
+                          coords = c("Longitude", "Latitude"),
+                          crs = 4326)  # WGS84 coordinate system
+
+# Check the object
+class(DMI.Stations.Shp)
+```
+
+**TASK:** Fill in the function to create sf objects, its arguments
+(data, coords, crs), and coordinate column names.
+
+## 1.4 Visualize Station Locations
+
+```{r plot-all-stations}
+# Load world map
+wrld_simpl <- ne_countries(type = "countries", scale = "large")
+
+# Fix invalid geometries (important!)
+wrld_simpl <- st_make_valid(wrld_simpl)
+
+# Plot all stations with world map
+ggplot() +
+  geom_sf(data = wrld_simpl, fill = "gray80", color = "white") +
+  geom_sf(data = DMI.Stations.Shp, color = "blue", size = 2) +
+  theme_minimal() +
+  labs(title = "DMI Weather Stations",
+       x = "Longitude", y = "Latitude")
+```
+
+**TASK:** Fill in function to get country data and its arguments,
+function to fix geometries, plus geoms for sf polygons and points.
+
+## 1.5 Extract Denmark Stations Only
+
+```{r filter-denmark}
+# Filter for Denmark only (ISO code: DNK)
+DK.Sites <- which(DMI.Stations.Shp$Country == "DNK")
+
+# Subset to Denmark stations
+DMI.DK.Shp <- DMI.Stations.Shp[DK.Sites, ]
+
+# View summary
+summary(DMI.DK.Shp)
+```
+
+**TASK:** Fill in the country column name, ISO code for Denmark, the
+subsetting index, and summary function.
+
+```{r plot-denmark-stations}
+# Plot Denmark stations with zoom
+ggplot() +
+  geom_sf(data = wrld_simpl, fill = "gray80", color = "white") +
+  geom_sf(data = DMI.DK.Shp, color = "blue", size = 2) +
+  coord_sf(xlim = c(7.9, 15.1), ylim = c(54.5, 58.0), expand = FALSE) +
+  theme_minimal() +
+  labs(title = "DMI Stations in Denmark")
+```
+
+**TASK:** Fill in the function to set coordinate limits in ggplot.
+
+------------------------------------------------------------------------
+
+# Part 2: Exploring Climate Data
+
+## 2.1 Visualize Temperature Distribution
+
+```{r plot-temp-distribution}
+# Order stations by temperature
+MAT.OrderVct <- DMI.DK.Shp[order(DMI.DK.Shp$MAT.C), ]
+
+# Create scatter plot
+ggplot(MAT.OrderVct, aes(x = X, y = MAT.C)) +
+  geom_point() +
+  labs(x = "Stations",
+       y = "Mean Annual Temperature (°C)",
+       title = "Mean Annual Temperature Distribution") +
+  theme_minimal()
+```
+
+**TASK:** Fill in the function to order data, the temperature column,
+and geom for points.
+
+## 2.2 Spatial Map of Temperature
+
+```{r map-temperature}
+# Fix invalid geometries in world map
+wrld_simpl <- st_make_valid(wrld_simpl)
+
+# Create Denmark bounding box
+denmark_bbox <- st_bbox( c(xmin = 7.9, xmax = 15.1, 
+                        ymin = 54.5, ymax = 58.0), 
+                      crs = st_crs(4326))
+
+# Crop world map to Denmark
+wrld_simpl_denmark <- st_crop(wrld_simpl, denmark_bbox)
+
+# Plot temperature spatially
+ggplot() +
+  geom_sf(data = wrld_simpl_denmark, fill = "lightgray", color = NA) +
+  geom_sf(data = DMI.DK.Shp, aes(color = MAT.C), size = 2) +
+  scale_color_gradientn(colors = hcl.colors(100, palette = "Blue-Red"),
+                       name = "Temperature (°C)") +
+  theme_minimal() +
+  labs(title = "Mean Annual Temperature in Denmark")
+```
+
+**TASK:** Fill in functions to fix invalid geometries, create bounding
+box, crop spatial data, and the aesthetic for color.
+
+**HINT:** Use `st_make_valid()` to fix geometry issues before cropping.
+
+------------------------------------------------------------------------
+
+# Part 3: Coordinate Transformation
+
+## 3.1 Transform to Projected CRS
+
+For accurate distance calculations, transform to a projected coordinate
+system (ETRS89 Lambert Azimuthal Equal-Area).
+
+```{r transform-crs}
+# Transform stations to projected CRS
+DMI.DK.Shp_proj <- st_transform(x = DMI.DK.Shp,
+                         crs = 3035)  # EPSG code for ETRS89 LAEA
+
+# Transform Denmark map
+wrld_simpl_denmark_proj <- st_transform(wrld_simpl_denmark, 3035)
+
+# Check the new CRS
+st_crs(DMI.DK.Shp_proj)
+```
+
+**TASK:** Fill in the transformation function and its arguments (object,
+crs), and function to check CRS.
+
+## 3.2 Plot with Projected Coordinates
+
+```{r plot-projected}
+# Plot with projected coordinates
+ggplot() +
+  geom_sf(data = wrld_simpl_denmark_proj, fill = "lightgrey", color = NA) +
+  geom_sf(data = DMI.DK.Shp_proj, aes(color = MAT.C), size = 2) +
+  scale_color_gradientn(colors = hcl.colors(100, palette = "Blue-Red"),
+                       name = "Temperature (°C)") +
+  theme_minimal() +
+  labs(title = "Mean Annual Temperature (Projected)")
+```
+
+------------------------------------------------------------------------
+
+# Part 4: Null Model Baseline
+
+## 4.1 Create RMSE Function
+
+```{r rmse-function}
+# Function to calculate Root Mean Square Error
+RMSE.Fnc <- function(observed, predicted) {
+  sqrt(mean((predicted - observed)^2, na.rm = TRUE))
+}
+```
+
+**TASK:** Fill in the functions: outer function (square root), inner
+function (mean), and subtraction components.
+
+## 4.2 Calculate Null Model
+
+The null model assigns the mean temperature to all locations.
+
+```{r null-model}
+# Assign mean as prediction (null model)
+DMI.DK.Shp_proj$Null.MAT <- mean(DMI.DK.Shp_proj$MAT.C, na.rm = TRUE)
+
+# Calculate RMSE for null model
+null.RMSE.MAT <- RMSE.Fnc(observed = DMI.DK.Shp_proj$MAT.C,
+                       predicted = DMI.DK.Shp_proj$Null.MAT)
+
+# Print null model RMSE
+print(paste("Null Model RMSE:", round(null.RMSE.MAT, 3)))
+```
+
+**TASK:** Fill in the mean function, RMSE function, and its arguments
+(observed, predicted).
+
+------------------------------------------------------------------------
+
+# Part 5: Inverse Distance Weighting (IDW)
+
+## 5.1 Understanding IDW
+
+**Inverse Distance Weighting** assumes nearby points are more similar
+than distant points. It weights observations by the inverse of their
+distance to the prediction location.
+
+**Key parameters:** - `nmax`: Number of nearest neighbors to use -
+`idp`: Inverse distance power (0 = simple average, 2 = default
+weighting)
+
+## 5.2 Create Prediction Grid
+
+```{r create-grid}
+# Create raster template
+DK.SpaGrid.1km <- rast(wrld_simpl_denmark_proj, res = 1000)  # 1km resolution
+
+# Initialize with values
+values(DK.SpaGrid.1km) <- 1
+
+# Mask ocean areas
+DK.SpaGrid.1km <- mask(x = DK.SpaGrid.1km,
+                        mask = wrld_simpl_denmark_proj)
+
+# Convert to SpatialGridDataFrame for gstat
+DK.SpaGrid.1km <- as(raster::raster(DK.SpaGrid.1km), 
+                     'SpatialGridDataFrame')
+```
+
+**TASK:** Fill in functions to create raster, set values, mask, and the
+class name for spatial grid.
+
+## 5.3 Perform IDW Interpolation
+
+```{r idw-interpolation}
+# Remove NA values
+DMI.DK.Shp_proj_noNA <- DMI.DK.Shp_proj[!is.na(DMI.DK.Shp_proj$MAT.C), ]
+
+# Perform IDW
+library(gstat)
+idw.gstat <- idw(formula = MAT.C ~ 1,
+                   locations = as(DMI.DK.Shp_proj_noNA, "Spatial"),
+                   newdata = DK.SpaGrid.1km,
+                   nmax = 10,    # Use 10 nearest neighbors
+                   idp = 0)     # Equal weighting (no distance decay)
+
+# Convert to SpatRaster
+IDW.MAT.1km <- rast(idw.gstat)
+class(idw.gstat)
+plot(idw.gstat)
+
+# Plot result
+library(tidyterra)
+ggplot() +
+  geom_spatraster(data = IDW.MAT.1km[[1]]) +
+  scale_fill_viridis_c(name = "Temperature (°C)", option = "B") +
+  geom_sf(data = st_as_sf(wrld_simpl_denmark_proj), 
+          fill = NA, color = "black") +
+  theme_minimal() +
+  labs(title = "IDW Interpolation - Mean Annual Temperature")
+```
+
+**TASK:** Fill in the temperature column, IDW function, its arguments
+(formula, locations, newdata, nmax, idp), rast conversion function, and
+geom for rasters.
+
+## 5.4 Cross-Validation for IDW
+
+```{r idw-cv}
+# Set seed for reproducibility
+set.seed(5132015)
+
+# Create 5-fold cross-validation groups
+library(dismo)
+kf <- kfold(x = DMI.DK.Shp_proj, k = 5)
+
+# Vector to store RMSE values
+RMSE.IDW.MAT <- rep(NA, 5)
+
+# Loop through folds
+for (k in 1:5) {
+  # Create test and train sets
+  test <- DMI.DK.Shp_proj[kf == k, ]
+  train <- DMI.DK.Shp_proj[kf != k, ]
+  
+  # Build gstat model
+  gs <- gstat(formula = MAT.C ~ 1,
+             locations = train[!is.na(train$MAT.C), ],
+             nmax = 10,
+             set = list(idp = 0))
+  
+  # Predict for test locations
+  p <- predict(gs, test)
+  
+  # Calculate RMSE
+  RMSE.IDW.MAT[k] <- RMSE.Fnc(test$MAT.C, p$var1.pred)
+}
+
+# Print results
+print(RMSE.IDW.MAT)
+print(paste("Mean RMSE:", round(mean(RMSE.IDW.MAT), 3)))
+
+# Calculate improvement over null model
+RMSE.IDW.MAT.Imp <- 1 - (mean(RMSE.IDW.MAT) / null.RMSE.MAT)
+print(paste("Improvement over null:", round(RMSE.IDW.MAT.Imp * 100, 1), "%"))
+```
+
+**TASK:** Fill in the kfold function and its arguments, fold indices,
+gstat function and arguments, predict function, and prediction column
+name.
+
+------------------------------------------------------------------------
+
+# Part 6: Thin Plate Splines (TPS)
+
+## 6.1 Understanding TPS
+
+**Thin Plate Splines** fit a smooth surface through data points, like
+bending a thin metal sheet. They minimize curvature while fitting the
+data, creating smooth interpolations.
+
+## 6.2 Fit TPS Model
+
+```{r tps-interpolation}
+# Load fields package
+library(fields)
+
+# Fit TPS model
+TPS.MAT <- Tps(x = st_coordinates(DMI.DK.Shp_proj),  # Coordinates matrix
+                Y = DMI.DK.Shp_proj$MAT.C)  # Response variable
+
+# Generate predictions
+TPS.MAT.Pred <- interpolate(object = raster(DK.SpaGrid.1km),
+                      model = TPS.MAT)
+
+# Mask ocean
+TPS.MAT.Pred <- mask(TPS.MAT.Pred, wrld_simpl_denmark_proj)
+
+# Convert to SpatRaster
+TPS.MAT.1km <- rast(TPS.MAT.Pred)
+
+# Plot result
+library(tidyterra)
+ggplot() +
+  geom_spatraster(data = TPS.MAT.1km) +
+  scale_fill_viridis_c(name = "Temperature (°C)", option = "B") +
+  geom_sf(data = st_as_sf(wrld_simpl_denmark_proj), 
+          fill = NA, color = "black") +
+  theme_minimal() +
+  labs(title = "TPS Interpolation - Mean Annual Temperature")
+```
+
+**TASK:** Fill in the TPS function, coordinate extraction function, its
+arguments (x, Y), interpolate function, and its arguments.
+
+## 6.3 Cross-Validation for TPS
+
+```{r tps-cv}
+# Set seed
+set.seed(5132015)
+
+# Create folds
+kf <- kfold(x = DMI.DK.Shp_proj, k = 5)
+
+# Vector for RMSE
+RMSE.TPS.MAT <- rep(NA, 5)
+
+# Loop through folds
+for (k in 1:5) {
+  test <- DMI.DK.Shp_proj[kf == k, ]
+  train <- DMI.DK.Shp_proj[kf != k, ]
+  
+  # Fit TPS model
+  Tps.mod <- Tps(x = st_coordinates(train),
+                   Y = train$MAT.C)
+  
+  # Predict
+  p <- predict(Tps.mod, st_coordinates(test))
+  
+  # Calculate RMSE
+  RMSE.TPS.MAT[k] <- RMSE.Fnc(test$MAT.C, p)
+}
+
+# Print results
+print(RMSE.TPS.MAT)
+print(paste("Mean RMSE:", round(mean(RMSE.TPS.MAT), 3)))
+
+# Calculate improvement
+RMSE.TPS.MAT.Imp <- 1 - (mean(RMSE.TPS.MAT) / null.RMSE.MAT)
+print(paste("Improvement over null:", round(RMSE.TPS.MAT.Imp * 100, 1), "%"))
+```
+
+**TASK:** Fill in Tps function, its arguments, predict function, and
+coordinate extraction for test data.
+
+------------------------------------------------------------------------
+
+# Part 7: Kriging (Geostatistical Interpolation)
+
+## 7.1 Understanding Kriging
+
+**Kriging** uses spatial autocorrelation structure (semivariogram) to
+optimally weight nearby observations. It provides: - Best linear
+unbiased predictions - Prediction uncertainty estimates
+
+## 7.2 Check for Duplicate Locations
+
+```{r check-duplicates}
+# Convert to Spatial object
+DMI.DK.Shp_proj_SP <- as(DMI.DK.Shp_proj, "Spatial")
+
+# Check for zero-distance points
+zerodist(DMI.DK.Shp_proj_SP)
+
+# Remove duplicates if any
+DMI.DK.Shp_proj2 <- DMI.DK.Shp_proj_SP[-zerodist(DMI.DK.Shp_proj_SP)[, 1], ]
+
+# Check again
+zerodist(DMI.DK.Shp_proj2)
+```
+
+**TASK:** Fill in the Spatial class name and the function to check zero
+distances.
+
+## 7.3 Calculate Semivariogram
+
+```{r calculate-variogram}
+# Create gstat object
+MAT.gstat <- gstat(formula = MAT.C ~ 1,
+                   locations = DMI.DK.Shp_proj_SP[!is.na(DMI.DK.Shp_proj_SP$MAT.C), ])
+
+# Calculate sample variogram
+MAT.Variog <- variogram(MAT.gstat, cutoff = 200000)  # 200 km cutoff
+
+# View variogram
+head(MAT.Variog)
+
+# Plot variogram
+plot(MAT.Variog)
+```
+
+**TASK:** Fill in gstat function and arguments, variogram function, head
+function, and plot function.
+
+## 7.4 Fit Theoretical Variogram
+
+```{r fit-variogram}
+# Automatic variogram fitting
+library(automap)
+MAT.Exp.Variog <- autofitVariogram(formula = MAT.C ~ 1,
+                        input_data = DMI.DK.Shp_proj2[!is.na(DMI.DK.Shp_proj2$MAT.C), ],
+                        model = c("Sph", "Exp", "Gau", "Nug", "Lin"))
+
+# View fitted model
+MAT.Exp.Variog
+
+plot(MAT.Exp.Variog)
+
+# Plot sample variogram with fitted model
+plot(MAT.Variog, 
+     MAT.Exp.Variog[[2]],
+     main = "Semivariogram with Fitted Model")
+```
+
+**TASK:** Fill in autofitVariogram function and its arguments (formula,
+input_data, model), and objects to plot.
+
+## 7.5 Perform Kriging
+
+### Method 1: Using gstat and predict
+
+```{r kriging-method1}
+# Recreate spatial grid
+DK.SpaGrid.1km <- raster(wrld_simpl_denmark_proj)
+res(DK.SpaGrid.1km) <- 1000
+DK.SpaGrid.1km[] <- 1
+DK.SpaGrid.1km <- mask(DK.SpaGrid.1km, wrld_simpl_denmark_proj)
+DK.SpaGrid.1km <- as(DK.SpaGrid.1km, 'SpatialGridDataFrame')
+
+# Create gstat object with variogram
+gstat.MAT <- gstat(formula = MAT.C ~ 1,
+                   locations = DMI.DK.Shp_proj2[!is.na(DMI.DK.Shp_proj2$MAT.C), ],
+                   model = MAT.Exp.Variog[[2]])
+
+# Predict
+Pred.gstat.MAT <- predict(object = gstat.MAT,
+                        newdata = DK.SpaGrid.1km)
+
+# Convert to raster
+Krig.MAT <- rast(Pred.gstat.MAT)
+
+# Plot
+ggplot() +
+  geom_spatraster(data = Krig.MAT[[1]]) +
+  scale_fill_viridis_c(name = "Temperature (°C)", option = "B") +
+  geom_sf(data = st_as_sf(wrld_simpl_denmark_proj), 
+          fill = NA, color = "black") +
+  theme_minimal() +
+  labs(title = "Ordinary Kriging - Mean Annual Temperature")
+```
+
+**TASK:** Fill in gstat function and arguments (formula, locations,
+model), predict function and arguments, and rast conversion.
+
+### Method 2: Using krige function
+
+```{r kriging-method2}
+# Direct kriging
+Pred.krige.MAT <- krige(formula = MAT.C ~ 1,
+                        locations = DMI.DK.Shp_proj2[!is.na(DMI.DK.Shp_proj2$MAT.C), ],
+                        newdata = DK.SpaGrid.1km,
+                        model = MAT.Exp.Variog[[2]])
+
+# Convert and plot
+Krig.MAT <- rast(Pred.krige.MAT)
+
+ggplot() +
+  geom_spatraster(data = Krig.MAT[[1]]) +
+  scale_fill_viridis_c(name = "Temperature (°C)", option = "B") +
+  geom_sf(data = st_as_sf(wrld_simpl_denmark_proj), 
+          fill = NA, color = "black") +
+  theme_minimal() +
+  labs(title = "Kriging - Mean Annual Temperature")
+```
+
+**TASK:** Fill in krige function and its arguments (formula, locations,
+newdata, model).
+
+### Method 3: Auto Kriging
+
+```{r auto-kriging}
+# Automatic kriging with automap
+Pred.autoKrige.MAT <- autoKrige(formula = MAT.C ~ 1,
+                            input_data = DMI.DK.Shp_proj2[!is.na(DMI.DK.Shp_proj2$MAT.C), ],
+                            new_data = DK.SpaGrid.1km)
+
+# Convert and plot
+Krig.MAT <- rast(Pred.autoKrige.MAT[[1]])
+
+ggplot() +
+  geom_spatraster(data = Krig.MAT[[1]]) +
+  scale_fill_viridis_c(name = "Temperature (°C)", option = "B") +
+  geom_sf(data = st_as_sf(wrld_simpl_denmark_proj), 
+          fill = NA, color = "black") +
+  theme_minimal() +
+  labs(title = "Auto Kriging - Mean Annual Temperature")
+```
+
+**TASK:** Fill in autoKrige function and its arguments (formula,
+input_data, new_data).
+
+## 7.6 Cross-Validation for Kriging
+
+```{r kriging-cv}
+# Kriging cross-validation
+Cros.Val.MAT <- krige.cv(formula = MAT.C ~ 1,
+                      locations = DMI.DK.Shp_proj2[!is.na(DMI.DK.Shp_proj2$MAT.C), ],
+                      nfold = 5,
+                      model = MAT.Exp.Variog[[2]])
+
+# Calculate RMSE for each fold
+RMSE.Kig.MAT <- sapply(1:5, function(i) {
+  RMSE.Fnc(
+    observed = DMI.DK.Shp_proj2[!is.na(DMI.DK.Shp_proj2$MAT.C), ][Cros.Val.MAT$fold == i, ]$MAT.C,
+    predicted = Cros.Val.MAT$var1.pred[Cros.Val.MAT$fold == i]
+  )
+})
+
+# Print results
+print(RMSE.Kig.MAT)
+print(paste("Mean RMSE:", round(mean(RMSE.Kig.MAT), 3)))
+
+# Calculate improvement
+RMSE.Kig.MAT.Imp <- 1 - (mean(RMSE.Kig.MAT) / null.RMSE.MAT)
+print(paste("Improvement over null:", round(RMSE.Kig.MAT.Imp * 100, 1), "%"))
+```
+
+**TASK:** Fill in krige.cv function and its arguments (formula,
+locations, nfold, model), and the prediction column name.
+
+------------------------------------------------------------------------
+
+# Part 8: Model Comparison
+
+## 8.1 Compare Performance
+
+```{r compare-models}
+# Create comparison table
+RMSE.sum <- data.frame(
+  Model = c("Null", "IDW", "TPS", "Kriging"),
+  Mean_RMSE = c(null.RMSE.MAT, 
+                mean(RMSE.IDW.MAT),
+                mean(RMSE.TPS.MAT),
+                mean(RMSE.Kig.MAT)),
+  Improvement = c(0,
+                 RMSE.IDW.MAT.Imp * 100,
+                 RMSE.TPS.MAT.Imp * 100,
+                 RMSE.Kig.MAT.Imp * 100)
+)
+
+# Print table
+print(RMSE.sum)
+
+# Visualize comparison
+ggplot(RMSE.sum[-1, ], aes(x = Model, y = Improvement)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  labs(title = "Model Performance Comparison",
+       y = "Improvement over Null Model (%)",
+       x = "Interpolation Method")
+```
+
+**TASK:** Fill in null RMSE, RMSE vectors for each method, improvement
+values, and geom for bars.
+
+## 8.2 Determine Best Model
+
+**Question:** Which interpolation method performed best? Why do you
+think this is the case?
+
+**Answer space:** - Best method: Kriging- Reason: Kriging incorporates
+the semivariogram model to more accurately predict values than the other
+models, as it can capture how exactly the response variable varies with
+distance.
+
+------------------------------------------------------------------------
+
+# Part 9: Ensemble Prediction
+
+## 9.1 Create Weighted Ensemble
+
+```{r ensemble-weights}
+# Create weights based on RMSE (inverse weighting)
+RMSE.w <- data.frame(
+  Model = c("IDW", "TPS", "Kriging"),
+  MAT.RMSE = c(mean(RMSE.IDW.MAT),
+               mean(RMSE.TPS.MAT),
+               mean(RMSE.Kig.MAT))
+)
+
+# Calculate weights (inverse proportion)
+RMSE.w$w <- (1/RMSE.w$MAT.RMSE) / sum((1/RMSE.w$MAT.RMSE)) 
+
+print(RMSE.w)
+```
+
+**TASK:** Fill in mean function for each RMSE vector and sum function.
+
+## 9.2 Create Raster Stack
+
+```{r create-stack}
+# Stack all predictions
+MAT.Stack <- c(IDW.MAT.1km[[1]],
+               rast(TPS.MAT.Pred),
+               project(Krig.MAT, IDW.MAT.1km)[[1]])
+
+# Name layers
+names(MAT.Stack) <- c("IDW", "TPS", "Kriging")
+
+print(MAT.Stack)
+```
+
+**TASK:** Fill in function to convert to raster and function to set
+names.
+
+## 9.3 Calculate Ensemble Prediction
+
+```{r ensemble-prediction}
+# Weighted ensemble
+MAT.Ensembl <- sum(MAT.Stack * RMSE.w$w)
+
+# Plot ensemble
+ggplot() +
+  geom_spatraster(data = MAT.Ensembl) +
+  scale_fill_viridis_c(name = "Temperature (°C)", option = "B") +
+  geom_sf(data = st_as_sf(wrld_simpl_denmark_proj), 
+          fill = NA, color = "black") +
+  theme_minimal() +
+  labs(title = "Ensemble Prediction - Mean Annual Temperature")
+```
+
+**TASK:** Fill in function to sum rasters and the stack object.
+
+## 9.4 Compare All Methods
+
+```{r compare-all-maps}
+# Add ensemble to stack
+MAT.Stack <- c(MAT.Stack, MAT.Ensembl)
+names(MAT.Stack)[4] <- "Ensemble"
+
+# Plot all methods
+# Plot all methods
+ggplot() +
+  geom_spatraster(data = MAT.Stack) +
+  facet_wrap(~lyr) +
+  scale_fill_viridis_c(name = "Temperature (°C)", option = "B") +
+  geom_sf(data = st_as_sf(wrld_simpl_denmark_proj), 
+          fill = NA, color = "black") +
+  theme_minimal() +
+  labs(title = "All Predictions - Mean Annual Temperature")
+
+```
+
+------------------------------------------------------------------------
+
+# Summary
+
+## Key Concepts Covered
+
+✓ **Point data preparation** - Loading and visualizing station data\
+✓ **Coordinate transformation** - Converting to projected CRS\
+✓ **Null model** - Establishing baseline performance\
+✓ **IDW** - Distance-based weighting interpolation\
+✓ **TPS** - Smooth surface fitting\
+✓ **Kriging** - Geostatistical interpolation using semivariograms\
+✓ **Cross-validation** - Assessing model performance\
+✓ **Model comparison** - Selecting optimal method\
+✓ **Ensemble modeling** - Combining multiple methods
+
+## Interpolation Methods Comparison
+
+| Method | Pros | Cons | Best For |
+|----|----|----|----|
+| **IDW** | Simple, fast | Doesn't smooth, edge effects | Quick estimates |
+| **TPS** | Smooth surfaces | Can oversmooth | Gradual transitions |
+| **Kriging** | Optimal weights, uncertainty | Complex, needs variogram | High accuracy needed |
+| **Ensemble** | Robust, balanced | Complex | Critical applications |
+
+## When to Use Each Method
+
+**Use IDW when:** - Need quick results - Data is relatively uniform -
+Computational resources limited
+
+**Use TPS when:** - Want smooth surfaces - Gradual spatial patterns - No
+strong directional trends
+
+**Use Kriging when:** - Need highest accuracy - Have sufficient data
+points - Want uncertainty estimates - Spatial autocorrelation is
+important
+
+**Use Ensemble when:** - Maximum reliability needed - Multiple methods
+perform similarly - Want to hedge against method-specific biases
+
+------------------------------------------------------------------------
+
+# Challenge Exercises
+
+## Challenge 1: Different Variable
+
+Repeat the analysis using Annual Precipitation instead of Mean Annual
+Temperature. Which method works best? Is it different from temperature?
+
+## Challenge 2: Resolution Effects
+
+Try different grid resolutions (500m, 2000m, 5000m). How does resolution
+affect: - Computational time? - Visual appearance? - Cross-validation
+RMSE?
+
+## Challenge 3: Variogram Models
+
+In the Kriging section, try fitting different variogram models
+manually: - Spherical - Exponential\
+- Gaussian
+
+Which provides the best fit?
+
+## Challenge 4: Prediction Uncertainty
+
+Extract and map the prediction variance from your Kriging model. Where
+is uncertainty highest?
+
+```{r}
+
+KrigVariance <- Krig.MAT[[2]]
+```
+
+------------------------------------------------------------------------
+
+# Additional Resources
+
+## Recommended Reading
+
+1.  Bivand, R.S., Pebesma, E., & Gomez-Rubio, V. (2013). *Applied
+    Spatial Data Analysis with R*. Springer.
+
+2.  Hengl, T. (2009). *A Practical Guide to Geostatistical Mapping*.
+    University of Amsterdam.
+
+3.  Webster, R., & Oliver, M.A. (2007). *Geostatistics for Environmental
+    Scientists*. Wiley.
+
+## Online Resources
+
+-   [CRAN Task View:
+    Spatial](https://cran.r-project.org/web/views/Spatial.html)
+-   [Geocomputation with R](https://r.geocompx.org/)
+-   [Spatial Data Science](https://r-spatial.org/)
+
+## Related Packages
+
+-   `geoR`: Geostatistical analysis
+-   `spatstat`: Spatial point pattern analysis
+-   `meteo`: Meteorological data interpolation
+-   `MBA`: Multilevel B-spline approximation
