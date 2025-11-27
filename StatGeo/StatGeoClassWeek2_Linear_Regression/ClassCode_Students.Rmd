@@ -1,0 +1,736 @@
+---
+title: "R Notebook - Linear regression"
+output:
+  html_document:
+  self_contained: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE) #, error = TRUE
+```
+
+# 5-Minute In-Class Exercise: Correlation vs Regression
+
+```{r}
+# Load the caterpillar data
+caterpillardata <- read.table("https://raw.githubusercontent.com/AlejoOrdonezAU/SatGeoMod2025/refs/heads/main/Data/caterpillar.txt", header = T)
+
+# Quick look at the data
+# Check the class of the loaded object?
+class(caterpillardata)
+# Check the sturcture of the loaded object?
+str(caterpillardata)
+# Print the the first six rows of the table
+head(caterpillardata)
+```
+
+### PART 1: CORRELATION - "How strong is the relationship?"
+
+Estimate the Pearson correlation coefficient between `growth` and `tannin`
+
+```{r}
+correlation <- cor(caterpillardata$growth,
+                     caterpillardata$tannin)
+print(paste("Correlation coefficient:", round(correlation, 3)))
+```
+
+### PART 2: REGRESSION - "What's the predictive relationship?"
+
+Build a regression where `growth` is a function of `tannin`
+
+```{r}
+model <- lm(growth ~ tannin,
+               data = caterpillardata)
+print(summary(model)$coefficients)
+```
+
+### PART 3: VISUAL COMPARISON
+
+Make a scatter plot showing the value of `tannin` for each mesured concentration of `growth` .
+
+```{r}
+# Plot 1a: Just correlation (no prediction line)
+library(ggplot2)
+
+ggplot(caterpillardata,
+       aes(x = tannin, y = growth)) +
+  geom_point(color = "blue") +
+  labs(
+    title = paste("Correlation =", round(correlation, 3)),
+    x = "Tannin %",
+    y = "Growth Rate"
+  ) +
+  theme_minimal()
+
+```
+
+Make a scatter plot (No regression line) showing the value of `growth` for each mesured concentration of `tannin`.
+
+```{r}
+# Plot 1b: Just correlation (no prediction line)
+ggplot(caterpillardata,
+       aes(x = growth, y = tannin)) +
+  geom_point(color = "blue", shape = 19) +
+  labs(
+    title = paste("Correlation =", round(correlation, 3)),
+    x = "Tannin %",
+    y = "Growth Rate"
+  ) +
+  theme_minimal()
+```
+
+Make a scatter plot (adding a regression line) showing how `growth` chenes as a function of `tannin`.
+
+```{r}
+# Plot 2: Regression (with prediction line)
+ggplot(caterpillardata,
+       aes(x = tannin, y = growth)) +
+  geom_point(color = "blue", shape = 19) +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red",
+              linewidth = 1) +
+  labs(
+    title = "Regression: Growth = 11.76 - 1.22 × Tannin",
+    x = "Tannin %",
+    y = "Growth Rate"
+  ) +
+  theme_minimal()
+```
+
+### DISCUSSION QUESTIONS:
+
+1.  If correlation = -0.9, what does this tell us about tannin and growth?
+
+2.  Using regression, what growth would you predict for 3% tannin?
+
+3.  What does correlation NOT tell us?
+
+4.  What can we predict for 3% tannin using regression?
+
+```{r}
+prediction <- predict(model,
+                    newdata = data.frame(tannin = 3))
+cat(paste("Predicted growth at 3% tannin:", round(prediction, 2), "\n"))
+```
+
+### Key Learning Points:
+
+1.  **Correlation** = strength and direction (-1 to +1)
+2.  **Regression** = prediction equation with intercept and slope\
+3.  **Correlation doesn't tell us the equation** - just how tightly points cluster around a line
+4.  **Regression gives us the actual line** we can use for predictions
+
+------------------------------------------------------------------------
+
+# 5-Minute In-Class Exercise: Regression for Hypothesis Testing & Prediction
+
+```{r}
+# Load the caterpillar data
+caterpillardata <- read.table("https://raw.githubusercontent.com/AlejoOrdonezAU/SatGeoMod2025/refs/heads/main/Data/caterpillar.txt", header = T)
+
+# Fit the regression model
+caterpillar_model <- lm(growth ~ tannin,
+                        data = caterpillardata)
+```
+
+### PART 1: HYPOTHESIS TESTING
+
+**HYPOTHESIS TESTING**
+
+```{r}
+# Fill in the blank: Get the model summary to see hypothesis tests
+summary(caterpillar_model)
+```
+
+\*\*DISCUSSION QUESTIONS\*:\*\*
+
+1.  What is the null hypothesis for the tannin coefficient?
+    -   $H_0$: \$\beta\*{tannin} = \$\* 0 (tannin has no effect)
+    -   $H_1$: $\beta_{tannin} \neq$ 0 (tannin has no effect)
+2.  Look at the p-value for tannin coefficient:
+    -   $p$-value = 0.000846
+    -   Decision: reject $H_0$ (reject/fail to reject)
+    -   Conclusion: Tannin does affect growth (does/doesn't)
+
+### PART 2: PREDICTIONS
+
+**Scenario 1**: What if we use 2% tannin in the diet?
+
+```{r}
+# Fill in the blank: Predict growth for 2% tannin
+prediction_2 <- predict(caterpillar_model, 
+                      newdata = data.frame(tannin = 2))
+cat("Predicted growth at 2% tannin:", round(prediction_2, 2), "\n")
+```
+
+**Scenario 2**: What about 6% tannin?
+
+```{r}
+# Fill in the blank: Predict growth for 6% tannin
+prediction_6 <- predict(caterpillar_model, 
+                       newdata = data.frame(tannin = 6))
+cat("Predicted growth at 6% tannin:", round(prediction_6, 2), "\n")
+```
+
+**BONUS**: Get prediction intervals
+
+```{r}
+cat("\n=== PREDICTION WITH UNCERTAINTY ===\n")
+# Fill in the blanks: Get 95% prediction interval for 4% tannin
+prediction_interval <- predict(caterpillar_model,
+                              newdata = data.frame(tannin = 4),
+                              interval = "prediction",
+                              level = 0.95)
+print(prediction_interval)
+```
+
+###INTERPRETATION QUESTIONS:
+
+3.  As tannin increases from 2% to 6%, growth decreases by 4.8 units
+4.  The prediction interval tells us: an interval where the value can range with a 95% confidence interval
+5.  Would you recommend 8% tannin? Why/why not? No, because increasing tannin decreases growth rate.
+
+### VISUAL CHECK
+
+```{r}
+prediction_points <- data.frame(
+  tannin = c(2, 6),
+  growth = c(as.numeric(prediction_2),# prediction 2% tannin
+             as.numeric(prediction_6))# prediction 6% tannin
+)
+
+
+ggplot(caterpillardata,
+       aes(x = tannin, y = growth)) +
+  geom_point(color = "blue", shape = 19) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1) +
+  # Add prediction points
+    geom_point(data = prediction_points,
+             aes(x = tannin, y = growth),
+             color = "red", 
+             shape = 19, 
+             size = 3) +
+  labs(
+    title = "Caterpillar Growth vs Tannin",
+    x = "Tannin %",
+    y = "Growth Rate"
+  ) +
+  theme_minimal()
+```
+
+### Key Learning Points:
+
+**Automatic Hypothesis Testing** - Every coefficient gets tested ($H_0: \beta = 0$) with $p$-values showing if predictors significantly explain the outcome - Interpret both statistical significance ($p$-values) and practical significance (coefficient size)
+
+**Two Types of Predictions** - Point estimates give "best guess" values, but always include prediction intervals for uncertainty - Choose confidence intervals (population mean) vs prediction intervals (individual observations) based on your goal
+
+**Stay Within Your Data Range** - Only predict within the range of original data to avoid extrapolation dangers - Check that covariate combinations make practical sense before trusting predictions
+
+**Connect Statistics to Decisions** - Use significant relationships to guide real-world choices - Remember: statistical significance $\neq$ causation, and model quality affects reliability of all results.
+
+------------------------------------------------------------------------
+
+# 5-Minute In-Class Exercise: Multiple Regression with Ozone Data
+
+```{r}
+# Load the ozone pollution data
+ozone_pollution <- read.table("https://raw.githubusercontent.com/AlejoOrdonezAU/SatGeoMod2025/refs/heads/main/Data/ozone_pollution.txt", header = T)
+
+# Fit multiple regression model
+ozone_model <- lm(ozone ~ temp + wind + rad, 
+                  data = ozone_pollution)
+```
+
+### PART 1: COLLECTIVE vs INDIVIDUAL EFFECTS
+
+**Compare single predictor models:**
+
+```{r}
+# Fill in the blanks: Create single predictor models
+temp_only <- lm(ozone ~ ______, data = ozone_pollution)
+wind_only <- lm(ozone ~ ______, data = ozone_pollution) 
+rad_only <- lm(ozone ~ ______, data = ozone_pollution)
+
+# Compare R-squared values
+cat("Temperature only R²:", round(summary(temp_only)$r.squared, 3), "\n")
+cat("Wind only R²:", round(summary(_______)$r.squared, 3), "\n")
+cat("Radiation only R²:", round(summary(_______)$r.squared, 3), "\n")
+cat("All together R²:", round(summary(ozone_model)$r.squared, 3), "\n")
+```
+
+**DISCUSSION QUESTIONS:**
+
+1.  Which single predictor explains the most variation? \_\_\_\_\_\_\_
+
+2.  How much MORE variation is explained when all predictors work together? \_\_\_\_\_\_\_
+
+3.  Why is the collective R² different from individual R² values? \_\_\_\_\_\_\_
+
+### PART 2: COEFFICIENT CHANGES
+
+**How do effects change when predictors work together?**
+
+```{r}
+# Fill in the blanks: Compare temperature coefficients
+cat("Temperature effect ALONE:", round(coef(_______)[2], 3), "\n")
+cat("Temperature effect WITH others:", round(coef(ozone_model)[2], 3), "\n")
+
+# Get full model summary
+summary(_______)
+```
+
+**DISCUSSION QUESTIONS:**
+
+4.  Temperature coefficient changed from \_\_\_\_\_\_\_ (alone) to \_\_\_\_\_\_\_ (with others)
+
+5.  Are ALL three predictors statistically significant? Look at p-values: \_\_\_\_\_\_\_
+
+6.  Which predictor has the strongest effect (largest \|coefficient\|)? \_\_\_\_\_\_\_
+
+### PART 3: PREDICTIONS WITH MULTIPLE PREDICTORS
+
+**Scenario 1**: Hot, sunny, calm day (temp=85, rad=250, wind=5)
+
+```{r}
+# Fill in the blanks: Predict ozone for hot, calm conditions
+prediction_hot <- predict(ozone_model,
+                         newdata = data.frame(temp = _____,
+                                             rad = _____,
+                                             wind = _____))
+cat("Predicted ozone (hot/calm):", round(prediction_hot, 1), "\n")
+```
+
+**Scenario 2**: Cool, cloudy, windy day (temp=65, rad=100, wind=15)
+
+```{r}
+# Fill in the blanks: Predict ozone for cool, windy conditions  
+prediction_cool <- predict(ozone_model,
+                          newdata = data.frame(temp = _____,
+                                              rad = _____,
+                                              wind = _____))
+cat("Predicted ozone (cool/windy):", round(prediction_cool, 1), "\n")
+```
+
+**BONUS**: Get prediction intervals for both scenarios
+
+```{r}
+cat("\n=== PREDICTIONS WITH UNCERTAINTY ===\n")
+# Fill in the blanks: Get 95% prediction intervals
+hot_interval <- predict(ozone_model,
+                       newdata = data.frame(temp = 85, rad = 250, wind = 5),
+                       interval = "_______",
+                       level = _____)
+
+cool_interval <- predict(ozone_model,
+                        newdata = data.frame(temp = 65, rad = 100, wind = 15),
+                        interval = "_______", 
+                        level = _____)
+
+print("Hot/calm day:")
+print(hot_interval)
+print("Cool/windy day:")
+print(cool_interval)
+```
+
+### INTERPRETATION QUESTIONS:
+
+7.  Hot/calm day predicts \_\_\_\_\_\_\_ ozone vs cool/windy day predicts \_\_\_\_\_\_\_ ozone
+8.  Which weather conditions create higher ozone pollution? \_\_\_\_\_\_\_
+9.  The prediction intervals show: \_\_\_\_\_\_\_
+10. Why do we need ALL three predictors instead of just temperature? \_\_\_\_\_\_\_
+
+### VISUAL CHECK
+
+```{r}
+# Create pairs plot to see relationships
+GGally::ggpairs(
+  ozone_pollution[, c("_______", "_______", "_______", "_______")],
+  aes(color = I("blue"), shape = I(19))
+  )
+```
+
+### Key Learning Points:
+
+**Multiple Predictors Work Together** - Single predictors miss important relationships; collective effects explain much more variation - Each predictor's effect depends on the presence of other predictors in the model
+
+**Coefficient Interpretation Changes** - Individual predictor coefficients change when other variables are added - Multiple regression coefficients show effect "holding other variables constant"
+
+**Real-World Prediction Power** - Multiple predictors allow realistic scenario testing (hot+calm vs cool+windy) - Always include uncertainty (prediction intervals) for reliable decision-making
+
+**Model Building Strategy** - Start simple, add complexity when justified by improved explanation - Check that all predictors contribute significantly before including in final model
+
+------------------------------------------------------------------------
+
+# 5-Minute In-Class Exercise: Building a Regression Model with Yields Data
+
+```{r}
+# Load the yields data
+yields <- read.table("https://raw.githubusercontent.com/AlejoOrdonezAU/SatGeoMod2025/refs/heads/main/Data/yields.txt", header = T)
+
+# Convert to long format for analysis
+yields_long <- stack(yields)
+names(yields_long) <- c("yield", "soil")
+```
+
+### PART 1: UNDERSTANDING YOUR DATA
+
+**Explore the structure:**
+
+```{r}
+# Fill in the blanks: Examine the data structure
+head(_______)
+str(_______)
+summary(_______)
+
+# Check what type of predictors we have
+cat("Soil types:", levels(as.factor(yields_long$soil)), "\n")
+cat("Number of observations per soil type:\n")
+table(yields_long$______)
+```
+
+**DISCUSSION QUESTIONS:**
+
+1.  What type of predictor is `soil`? (continuous/categorical) \_\_\_\_\_\_\_
+
+2.  How many levels does the soil factor have? \_\_\_\_\_\_\_
+
+3.  Why do we need to convert wide format to long format? \_\_\_\_\_\_\_
+
+### PART 2: CATEGORICAL vs CONTINUOUS PREDICTORS
+
+**Understanding the difference:**
+
+```{r}
+# Categorical predictor: soil type (names/labels)
+cat("Categorical predictor - Soil types:\n")
+print(unique(yields_long$soil))
+
+# If we had a continuous predictor (create example)
+yields_long$fertilizer <- rep(c(10, 15, 20), length.out = nrow(yields_long))
+cat("\nContinuous predictor - Fertilizer amount:\n")
+print(head(yields_long$fertilizer))
+```
+
+**KEY DIFFERENCES:**
+
+-   **Categorical**: Soil = {"sand", "clay", "loam"} - uses dummy variables
+
+-   **Continuous**: Fertilizer = {10, 15, 20, ...} - uses actual numeric values
+
+### PART 3: MODEL BUILDING PROCESS
+
+**Step 1: Decide if regression is suitable**
+
+```{r}
+# Fill in the blanks: Visualize the relationships
+library(ggplot2)
+ggplot(yields_long, aes(x = ______, y = ______)) +
+  geom_boxplot(fill = "lightblue", alpha = 0.7) +
+  labs(title = "Yield by Soil Type",
+       x = "Soil Type", 
+       y = "Crop Yield") +
+  theme_minimal()
+```
+
+**Step 2: Build the regression model**
+
+```{r}
+# Fill in the blanks: Fit the model with categorical predictor
+yields_model <- lm(______ ~ ______, data = yields_long)
+
+# Get model summary
+summary(_______)
+```
+
+**DISCUSSION QUESTIONS:**
+
+4.  How many coefficients does R create for 3 soil types? \_\_\_\_\_\_\_
+
+5.  Which soil type is the reference category? \_\_\_\_\_\_\_
+
+6.  What does the intercept represent? \_\_\_\_\_\_\_
+
+### PART 4: UNDERSTANDING CATEGORICAL PREDICTOR CODING
+
+**How R handles categorical predictors:**
+
+```{r}
+# Fill in the blanks: See the dummy variables R creates
+model.matrix(______ ~ ______, data = yields_long)[1:10, ]
+
+# Compare group means
+cat("\n=== GROUP MEANS ===\n")
+aggregate(______ ~ ______, data = yields_long, FUN = mean)
+```
+
+**Interpreting coefficients:**
+
+```{r}
+# Fill in the blanks: Extract and interpret coefficients
+coeffs <- coef(yields_model)
+cat("Intercept (sand mean):", round(coeffs[1], 2), "\n")
+cat("Clay effect:", round(coeffs[_____], 2), "\n")
+cat("Loam effect:", round(coeffs[_____], 2), "\n")
+
+# Calculate actual means
+cat("\nActual group means:\n")
+cat("Sand:", round(coeffs[1], 2), "\n")
+cat("Clay:", round(coeffs[1] + coeffs[2], 2), "\n") 
+cat("Loam:", round(coeffs[1] + coeffs[3], 2), "\n")
+```
+
+### PART 5: MODEL CHECKING
+
+**Step 3: Check assumptions**
+
+```{r}
+# Fill in the blanks: Basic residual checks
+plot(yields_model, which = _____) # Residuals vs Fitted
+plot(yields_model, which = _____) # QQ plot
+```
+
+**Step 4: Interpret results**
+
+```{r}
+# Fill in the blanks: Test if soil type matters
+anova_result <- anova(yields_model)
+print(_______)
+
+cat("\nF-test p-value:", round(anova_result$"Pr(>F)"[1], 4), "\n")
+cat("Conclusion: Soil type", 
+    ifelse(anova_result$"Pr(>F)"[1] < 0.05, "DOES", "does NOT"), 
+    "significantly affect yield\n")
+```
+
+### INTERPRETATION QUESTIONS:
+
+7.  The intercept represents the mean yield for \_\_\_\_\_\_\_ soil
+8.  Clay soil yields \_\_\_\_\_\_\_ units more/less than sand soil
+9.  Which soil type produces the highest yield? \_\_\_\_\_\_\_
+10. Is there significant evidence that soil type affects yield? (p \< 0.05) \_\_\_\_\_\_\_
+
+### VISUAL CHECK: Model Fit
+
+```{r}
+# Create enhanced plot showing model predictions
+ggplot(yields_long, aes(x = soil, y = yield)) +
+  geom_boxplot(alpha = 0.3, fill = "lightblue") +
+  geom_point(position = position_jitter(width = 0.2), 
+             alpha = 0.6, size = 2, color = "steelblue") +
+  stat_summary(fun = mean, geom = "point", 
+               size = 4, color = "red", shape = 18) +
+  stat_summary(fun = mean, geom = "line", 
+               aes(group = 1), color = "red", size = 1) +
+  labs(title = "Crop Yields by Soil Type",
+       subtitle = "Red diamonds = Model predictions (group means)",
+       x = "Soil Type", 
+       y = "Crop Yield") +
+  theme_minimal()
+```
+
+### Key Learning Points:
+
+**Categorical vs Continuous Predictors**
+
+-   **Categorical**: Uses dummy variables (0/1 coding) for each level except reference
+
+-   **Continuous**: Uses actual numeric values directly in the model equation
+
+-   **Interpretation**: Categorical coefficients show difference from reference group
+
+**Model Building Process**
+
+-   **Step 1**: Understand data generation and clean data
+
+-   **Step 2**: Check if regression is suitable (boxplots for categorical predictors)
+
+-   **Step 3**: Build model - R automatically creates dummy variables
+
+-   **Step 4**: Check assumptions (residual plots, normality)
+
+-   **Step 5**: Interpret coefficients in context of reference group
+
+**Dummy Variable Coding**
+
+-   **Reference group**: First alphabetically (or manually set with `relevel()`)
+
+-   **Coefficients**: Show difference from reference, not absolute effects
+
+-   **F-test**: Tests if ANY group differs (overall effect of categorical predictor)
+
+**Practical Decision Making**
+
+-   Use ANOVA F-test to determine if categorical predictor matters overall
+
+-   Use individual t-tests to see which specific groups differ from reference
+
+-   Always interpret coefficients relative to the reference category
+
+------------------------------------------------------------------------
+
+# 5-Minute In-Class Exercise: Testing Regression Assumptions with Yields Data
+
+```{r}
+# Load and prepare the yields data
+yields <- read.table("https://raw.githubusercontent.com/AlejoOrdonezAU/SatGeoMod2025/refs/heads/main/Data/yields.txt", header = T)
+yields_long <- stack(yields)
+names(yields_long) <- c("yield", "soil")
+
+# Fit the regression model
+yields_model <- lm(yield ~ soil, data = yields_long)
+```
+
+### PART 1: ASSUMPTION 1 - LINEARITY
+
+**For categorical predictors, we check if group means make sense**
+
+```{r}
+# Fill in the blanks: Visualize group relationships
+library(ggplot2)
+ggplot(yields_long, aes(x = ______, y = ______)) +
+  geom_boxplot(fill = "lightblue", alpha = 0.7) +
+  stat_summary(fun = mean, geom = "point", size = 4, color = "red") +
+  labs(title = "Assumption 1: Are group differences reasonable?",
+       x = "Soil Type", y = "Yield") +
+  theme_minimal()
+```
+
+**QUICK CHECK:** Do the group means (red dots) show clear differences? \_\_\_\_\_\_\_
+
+### PART 2: ASSUMPTION 2 - INDEPENDENCE
+
+**Check residuals vs fitted values for patterns**
+
+```{r}
+# Fill in the blanks: Create residuals vs fitted plot
+ggplot(yields_long,
+       aes(x = ______(yields_model),
+           y = ______(yields_model))) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  geom_point(size = 3, alpha = 0.7, color = "steelblue") +
+  labs(title = "Assumption 2: Independence Check",
+       subtitle = "Look for random scatter around zero",
+       x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+```
+
+**QUICK CHECK:** Do you see random scatter or any patterns? \_\_\_\_\_\_\_
+
+### PART 3: ASSUMPTION 3 - NORMALITY
+
+**Test if residuals are normally distributed**
+
+```{r}
+# Fill in the blanks: Create QQ plot for normality
+ggplot(data = NULL,
+       aes(sample = resid(_______))) +
+  stat_qq(color = "blue", size = 3) +
+  stat_qq_line(color = "red", size = 1.5) +
+  labs(title = "Assumption 3: Normality of Residuals",
+       subtitle = "Points should follow the red line",
+       x = "Expected (Normal)", y = "Observed (Residuals)") +
+  theme_minimal()
+
+# Statistical test for normality
+shapiro_test <- shapiro.test(______(yields_model))
+cat("Shapiro-Wilk test p-value:", round(shapiro_test$p.value, 4), "\n")
+cat("Interpretation:", ifelse(shapiro_test$p.value > 0.05, 
+                           "Residuals appear normal ✓", 
+                           "Evidence against normality ✗"), "\n")
+```
+
+**QUICK CHECK:** Do points follow the red line? $p$-value \> 0.05? \_\_\_\_\_\_\_
+
+### PART 4: ASSUMPTION 4 - HOMOSCEDASTICITY
+
+**Check if variance is equal across groups**
+
+```{r}
+# Fill in the blanks: Check variance equality across groups
+ggplot(yields_long, aes(x = ______,
+                        y = ______(______))) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  geom_boxplot(fill = "lightcoral", alpha = 0.6) +
+  geom_point(position = position_jitter(width = 0.2), 
+             alpha = 0.7, size = 2) +
+  labs(title = "Assumption 4: Equal Variances (Homoscedasticity)",
+       subtitle = "Box heights should be similar across groups",
+       x = "Soil Type", y = "Residuals") +
+  theme_minimal()
+
+# Statistical test for equal variances
+if(require(car, quietly = TRUE)) {
+  levene_test <- leveneTest(yield ~ soil, data = yields_long)
+  cat("Levene's test p-value:", round(levene_test$"Pr(>F)"[1], 4), "\n")
+  cat("Interpretation:", ifelse(levene_test$"Pr(>F)"[1] > 0.05, 
+                               "Equal variances ✓", 
+                               "Unequal variances ✗"), "\n")
+}
+```
+
+**QUICK CHECK:** Are the box heights similar? p-value \> 0.05? \_\_\_\_\_\_\_
+
+### PART 5: COMPREHENSIVE ASSUMPTION CHECK
+
+**One-stop diagnostic plots**
+
+```{r}
+# Fill in the blanks: Use R's built-in diagnostic plots
+par(mfrow = c(2, 2))  # 2x2 grid
+plot(_______, which = 1)  # Residuals vs Fitted
+plot(_______, which = 2)  # QQ plot  
+plot(_______, which = 3)  # Scale-Location
+plot(_______, which = 5)  # Residuals vs Leverage
+par(mfrow = c(1, 1))     # Reset to single plot
+```
+
+### ASSUMPTION SUMMARY CHECKLIST:
+
+```{r}
+cat("\n=== ASSUMPTION CHECK SUMMARY ===\n")
+
+# Calculate diagnostics
+residuals <- resid(yields_model)
+shapiro_p <- shapiro.test(residuals)$p.value
+
+# Group variances
+group_vars <- aggregate(residuals, by = list(yields_long$soil), FUN = var)
+variance_ratio <- max(group_vars$x) / min(group_vars$x)
+
+cat("1. LINEARITY (categorical):     ✓ (checked visually)\n")
+cat("2. INDEPENDENCE:               ", 
+    ifelse(abs(mean(residuals)) < 0.001, "✓", "✗"), 
+    " (mean residual ≈ 0)\n")
+cat("3. NORMALITY:                  ", 
+    ifelse(shapiro_p > 0.05, "✓", "✗"), 
+    " (Shapiro p =", round(shapiro_p, 3), ")\n")
+cat("4. HOMOSCEDASTICITY:           ", 
+    ifelse(variance_ratio < 4, "✓", "✗"), 
+    " (variance ratio =", round(variance_ratio, 2), ")\n")
+
+cat("\n=== OVERALL MODEL ASSESSMENT ===\n")
+all_good <- shapiro_p > 0.05 & variance_ratio < 4
+cat("All assumptions met:", ifelse(all_good, "✓ PROCEED", "✗ NEEDS ATTENTION"), "\n")
+```
+
+### INTERPRETATION QUESTIONS:
+
+1.  Which assumption is most important for categorical predictors? \_\_\_\_\_\_\_
+2.  What does a Shapiro-Wilk p-value \> 0.05 tell us? \_\_\_\_\_\_\_
+3.  If variances are unequal, what might we need to do? \_\_\_\_\_\_\_
+4.  Are all assumptions satisfied for this model? \_\_\_\_\_\_\_
+
+### Key Learning Points:
+
+**The Four Key Assumptions** - **Linearity**: Relationship makes sense (for categorical: reasonable group differences) - **Independence**: Residuals show random scatter, no patterns - **Normality**: Residuals follow normal distribution (QQ plot + Shapiro test) - **Homoscedasticity**: Equal variance across groups/fitted values
+
+**Visual Diagnostics Are Key** - **QQ plots**: Most intuitive for checking normality - **Residual plots**: Essential for independence and homoscedasticity - **Boxplots by group**: Perfect for checking equal variances
+
+**Statistical Tests Confirm Visual Checks** - **Shapiro-Wilk**: Tests normality (p \> 0.05 = good) - **Levene's test**: Tests equal variances (p \> 0.05 = good) - **Always combine visual + statistical evidence**
+
+**When Assumptions Fail** - **Don't panic**: Regression is robust to minor violations - **Transform variables**: Often fixes normality and variance issues - **Use alternative methods**: Robust regression, weighted least squares - **The model can still be useful** even with minor assumption violations
+
+------------------------------------------------------------------------

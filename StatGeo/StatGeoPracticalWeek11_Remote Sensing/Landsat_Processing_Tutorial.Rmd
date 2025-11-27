@@ -1,0 +1,683 @@
+---
+title: "Processing and Mapping Landsat Satellite Data in R"
+subtitle: "A Practical Tutorial"
+author: "Søren Meier"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cosmo
+    highlight: tango
+    code_folding: show
+editor_options:
+  chunk_output_type: console
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  fig.align = 'center',
+  eval = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+```
+
+------------------------------------------------------------------------
+
+# Introduction
+
+## Learning Objectives
+
+By the end of this tutorial, you will be able to:
+
+-   Load and visualize Landsat satellite imagery in R
+-   Create RGB composite images from individual spectral bands
+-   Crop and subset raster data to areas of interest
+-   Apply different contrast enhancement techniques
+-   Create false-color composites for different applications
+-   Calculate vegetation indices (NDVI)
+-   Perform change detection analysis
+
+## Background
+
+Landsat satellites have been continuously monitoring Earth's surface
+since 1972, providing invaluable data for environmental monitoring, land
+use planning, and change detection. Landsat 8, launched in 2013,
+captures data across 11 spectral bands at 30-meter resolution.
+
+In this tutorial, you'll work with Landsat 8 imagery of the Aarhus
+region in Denmark, learning how to process and visualize satellite data
+using R's `raster` package.
+
+**Note:** If you encounter errors with `plotRGB()` and the `scale`
+parameter, ensure your raster package is up to date
+(`update.packages("raster")`). Some older versions may have issues with
+large scale values.
+
+------------------------------------------------------------------------
+
+## Setup and Package Installation
+
+### Installing Required Packages
+
+The `raster` package is the primary tool for working with raster data in
+R. You can also use its newer iteration, the `terra` package, but we'll
+focus on `raster` for this tutorial.
+
+```{r install, eval = FALSE}
+# Install the raster package (only needed once)
+install.packages("raster")
+```
+
+## Loading Libraries
+
+```{r load_packages}
+# Load the raster package
+library(raster)
+```
+
+**Question 1:** What package provides the `sp` (spatial) classes that
+`raster` depends on? (Hint: check the startup message)
+
+-   The package "sp" provides the spatial classes.
+
+------------------------------------------------------------------------
+
+## Understanding Raster Structures
+
+The `raster` package provides three different structures depending on
+your data:
+
+| Function   | Use Case                                                |
+|------------|---------------------------------------------------------|
+| `raster()` | One file, one band                                      |
+| `brick()`  | One file, multiple bands (e.g., RGB images)             |
+| `stack()`  | Multiple files, multiple bands (e.g., Landsat GeoTIFFs) |
+
+For Landsat data, we typically use `stack()` because each spectral band
+is stored in a separate file.
+
+------------------------------------------------------------------------
+
+# Creating RGB Raster Visualizations
+
+## Loading Individual Bands
+
+Landsat 8 visible light bands: - **Band 2**: Blue (0.45-0.51 μm) -
+**Band 3**: Green (0.53-0.59 μm) - **Band 4**: Red (0.64-0.67 μm)
+
+```{r load_bands}
+# Load the Blue Band (Band 2)
+blue <- raster("./Data/LC08_L1TP_196021_20190629_20200827_02_T1_B2.TIF")
+
+# Load the Green Band (Band 3)
+green <- raster("./Data/LC08_L1TP_196021_20190629_20200827_02_T1_B3.TIF")
+
+# Load the Red Band (Band 4)
+red <- raster("./Data/LC08_L1TP_196021_20190629_20200827_02_T1_B4.TIF")
+
+print(blue)
+```
+
+**Question 2:** Use the `print()` function on one of your raster
+objects. What is the resolution (pixel size) of Landsat 8 data?
+
+-   30 m x 30 m
+
+## Stacking Bands
+
+```{r create_stack}
+# Combine the three bands into a single RasterStack
+rgb.Scene <- stack(red, green, blue)
+```
+
+## Plotting RGB Composite
+
+Landsat 8 Level 1 data uses 16-bit values ranging from 0 to 65535. We
+need to specify this range when plotting.
+
+**Note:** If you get an error about alpha levels, try using
+`stretch = "lin"` instead of the scale parameter.
+
+```{r plot_rgb}
+# Plot the RGB composite
+plotRGB(rgb.Scene,
+        r = 1, # Index of the Red channel in the RasterStack
+        g = 2, # Index of the Green channel in the RasterStack
+        b = 3, # Index of the Blue channel in the RasterStack
+        scale = 65535, # Maximum value for 16-bit data
+        axes = TRUE, 
+        main = "Landsat Scene - Full Extent"
+)
+```
+
+**Question 3:** Why does the image appear very dark?
+
+-   The range of values able to be stored in each cell is 65535, but the
+    data we have only occupy a very small range of these possible
+    values, meaning they appear very dark when we do not scale the range
+    properly to our data.
+
+------------------------------------------------------------------------
+
+## Cropping to Area of Interest
+
+Landsat scenes cover over 30,000 km², which can make it difficult to see
+local features. Let's crop to the Aarhus region.
+
+### Defining the Boundary
+
+```{r define_boundary}
+# Define a raster with the boundary coordinates
+# Coordinates are in latitude/longitude (WGS84)
+boundary <- raster(
+  ymx = 56.20,  # Maximum y coordinate (top border)
+  xmn = 10.09,  # Minimum x coordinate (left border)
+  ymn = 56.10,  # Minimum y coordinate (bottom border)
+  xmx = 10.29   # Maximum x coordinate (right border)
+)
+```
+
+### Projecting the Boundary
+
+The boundary needs to match the coordinate system of the Landsat data.
+
+```{r project_boundary}
+# Project the boundary to match the Landsat scene's CRS
+boundary <- projectRaster(boundary,
+  crs = rgb.Scene@srs  # Extract CRS from the Landsat stack
+)
+```
+
+### Cropping the Scene
+
+```{r crop_scene}
+# Crop the Landsat image to the Aarhus region
+AarhusReg <- crop(
+  x = rgb.Scene,      # The raster to crop
+  y = boundary       # The extent/boundary to crop to
+)
+
+# Plot the cropped RGB composite
+plotRGB(AarhusReg,
+        r = 1, g = 2, b = 3,
+        scale = 65535,
+        axes = TRUE, 
+        main = "Landsat - Aarhus Region"
+)
+```
+
+*Note that the displayed image looks the same, since we already cropped
+the image in advance, so that you can load it on PositCloud. The
+original image was too large to load into memory.*
+
+**Question 4:** Does the cropped image still appear dark? Why?
+
+-   We are still using the same scale, meaning the same problems still
+    persist.
+
+------------------------------------------------------------------------
+
+# Improving Visualization with Contrast Stretching
+
+When pixel values occupy only a small portion of the possible value
+range (0-65535), images appear dull: either very dark, bright or gray,
+lacking detail in color space. Contrast stretching redistributes values
+across the full display range. In an 8-bit image, this range is 0-255
+and the 'plotRGB()' function assumes 255 as the maximum value by
+default. If 'scale' is defined, it is used as the new maximum value. If
+'stretch' is defined, it will rescale the values ignoring 'scale' or the
+default maximum value of 255.
+
+## Linear Stretch
+
+Linear stretching rescales values evenly from minimum to maximum.
+
+```{r linear_stretch}
+# Apply linear stretching
+plotRGB(AarhusReg,
+        r = 1, g = 2, b = 3,
+        scale = 65535,
+        stretch = "lin",  # Type of stretch
+        axes = TRUE,
+        main = "Landsat - Aarhus\nLinear Stretch"
+)
+```
+
+## Histogram Stretch
+
+Histogram stretching distributes values more evenly across the range
+based on their frequency. It applies a histogram equalization, which
+means that it stretches dense parts of the histogram and condenses
+sparse parts.
+
+```{r histogram_stretch}
+# Apply histogram stretching
+plotRGB(AarhusReg,
+        r = 1, g = 2, b = 3,
+        scale = 65535,
+        stretch = "hist",  # Type of stretch
+        axes = TRUE,
+        main = "Landsat - Aarhus\nHistogram Stretch"
+)
+```
+
+**Question 5:** Compare the two stretching methods. Which produces
+better results for this scene?
+
+-   The linear stretch method is clearly better, indicating that our
+    data may be somewhat equally distributed across their values.
+
+-   But - the histogram amplifies the very dark values, revealing some
+    other patterns.
+
+------------------------------------------------------------------------
+
+## Custom Stretch Using Percentiles
+
+For more control, we can manually define the stretch based on data
+percentiles.
+
+### Exploring Data Distribution
+
+Use the histogram function in R to explore data distributions.
+
+```{r explore_histograms}
+# Plot histograms for each band
+hist(AarhusReg[[1]])  # Red band
+hist(AarhusReg[[2]])  # Green band
+hist(AarhusReg[[3]])  # Blue band
+```
+
+### Calculating Percentiles
+
+Derive percentiles of the data distributions at 0%, 1%, 5%, 25%, 50%,
+75%, 95%, 99% and 100% of the data. For example, the 75th percentile
+means that 75% of data points lie below this value.
+
+```{r calculate_percentiles}
+# Calculate percentiles per band, for all bands
+qs_ls <- quantile(AarhusReg, c(0,.01,.05,.25,.50,.75,.95,.99,1))
+
+# Extract and store the extreme values (low and high) across bands for key percentiles:
+min0 <- min(qs_ls[, "0%"])
+min5 <- min(qs_ls[, "5%"])
+max95 <- max(qs_ls[, "95%"])
+max100 <- max(qs_ls[, "100%"])
+```
+
+## Applying Custom Stretch
+
+```{r custom_stretch}
+# Plot with custom stretch based on the 5th and 95th percentiles of the data distribution
+plotRGB(
+  AarhusReg - min5,           # Subtract minimum to shift range
+  scale = max95 - min5,         # Set scale to 90th percentile range
+  zlim = c(0, max95 - min5),  # Limit display range
+  axes = TRUE,
+  main = "Landsat - Aarhus\nCustom Stretch"
+)
+```
+
+**Question 6:** Why do we subtract `min5` or `min0` from the raster
+before plotting?
+
+-   To shift the range to where most of our data is, such that the
+    plotting is not distorted as much by values far from most of the
+    other data - removing outliers.
+
+**Extra Question (advanced):** What is a key difference between the
+custom stretch and the built-in image stretch option?
+
+-   In the custom stretch, we define ourselves how we want to stretch
+    the data, what data to omit - in the built-in option, the stretch is
+    based on pre-defined cutoffs/methods.
+
+-   The custom stretch takes the relationship between the distributions
+    of the 3 bands into account, keeping the differences between the
+    bands - thats why we mostly remove red values (image becomes more
+    blue) when we subtract the min5 percentile. The built-in options
+    treat the 3 bands the same way and overlays them on top of each
+    other - aligning the distributions (mimicking a sort of atmospheric
+    correction)
+
+------------------------------------------------------------------------
+
+## Gamma Correction (Advanced)
+
+Gamma correction applies non-linear transformations to the data to
+remove data skewness, and therefore to ensure a more perceptually even
+representation of colors. The goal is to transform the data so that it
+is unskewed and closer to a normal distribution.
+
+```{r gamma_correction}
+# Extract individual bands
+blue_band <- AarhusReg[[3]]
+green_band <- AarhusReg[[2]]
+red_band <- AarhusReg[[1]]
+
+# Rescale values to 0-1 range based on the 5th and 95th percentile for each band
+max_range <- qs_ls[, "95%"]-qs_ls[, "5%"]
+blue_band <- ((blue_band-qs_ls[3, "5%"]) / max_range[3])
+green_band <- (green_band-qs_ls[2, "5%"]) / max_range[2]
+red_band <- (red_band-qs_ls[1, "5%"]) / max_range[1]
+
+# Set negative values to zero
+blue_band[blue_band < 0] <- 0
+green_band[green_band < 0] <- 0
+red_band[red_band < 0] <- 0
+
+# Set values above 1 to 1
+blue_band[blue_band > 1] <- 1
+green_band[green_band > 1] <- 1
+red_band[red_band > 1] <- 1
+
+# Plot histograms before correction
+hist(blue_band)  # Blue band
+hist(green_band)  # Green band
+hist(red_band)  # Red band
+
+# Apply gamma transformation: use exponent 0.5 for a square-root transformation
+blue.Gamma <- blue_band^0.5     # Emphasize mid-tones with square-root transformation
+green.Gamma <- green_band^0.5   # Emphasize mid-tones with square-root transformation
+red.Gamma <- red_band^0.5       # Emphasize mid-tones with square-root transformation
+
+# Plot histograms before correction
+hist(blue.Gamma)  # Blue band
+hist(green.Gamma)  # Green band
+hist(red.Gamma)  # Red band
+
+# Stack the gamma-corrected bands
+rgb.Gamma <- stack(red.Gamma, green.Gamma, blue.Gamma)
+
+# Plot
+plotRGB(rgb.Gamma,
+        scale = 1,
+        zlim = c(0, 1),
+        axes = TRUE,
+        main = "Landsat - Aarhus\nGamma Correction"
+)
+```
+
+*Note that there are many different ways to transform your data based on
+the original data distribution and the assumptions for your statistical
+analysis and data visualization. For example, you can look into
+log-transformation or the box-cox transformation that transforms data
+into a shape close to a normal distribution.*
+
+------------------------------------------------------------------------
+
+## Using Pre-processed Natural Color Images
+
+Landsat provides pre-processed "Natural Color" GeoTIFF files that
+require less work. They are meant for visualization purposes only and
+for data exploration, providing an image data stretch that is close to
+our human perception.
+
+```{r natural_color}
+# Load the Natural Color Image (all bands in one file)
+rgb.Nat.Color <- brick("./Data/LC08_L1TP_196021_20190629_20200827_02_T1_refl.TIF")
+
+# Crop to Aarhus region
+rgb.Nat.Color <- crop(
+  x = rgb.Nat.Color,
+  y = boundary
+)
+
+# Plot
+plotRGB(rgb.Nat.Color,
+        axes = TRUE,
+        main = "Landsat - Aarhus\nNatural Color Image"
+)
+```
+
+**Question 7:** How does this compare to your manually created RGB
+composites?
+
+-   It is very green-saturated and with darker colors, boundaries and
+    specific features are hard to tell. The manual RGB composites
+    highlighted structures better, and had overall more contrasts
+    between different objects.
+
+------------------------------------------------------------------------
+
+# False-Color Composites
+
+Beyond so-called "true-color" RGB images, different band combinations
+using different wavelengths highlight different surface features. Below
+you will explore a few common false-color composites. Landsat bands are
+provided in brackets, e.g. (2) for band 2.
+
+## Color Infrared (NIR Composite)
+
+A very common false-color composite uses the near-infrared band assigned
+to the red color, the red band as green and the green band as blue
+(Landsat band numbers in brackets):
+
+**Bands**: NIR (5), Red (4), Green (3)\
+**Purpose**: Vegetation health analysis
+
+Healthy vegetation appears bright red because it strongly reflects
+near-infrared radiation. You can also find more information about
+Landsat bands and common false-color composites
+[here](https://gisgeography.com/Landsat-8-bands-combinations/).
+
+```{r color_infrared}
+# Load and crop near-infrared band
+nir <- raster("./Data/LC08_L1TP_196021_20190629_20200827_02_T1_B5.TIF")
+nir <- crop(x = nir, y = boundary)
+
+# Create Color Infrared stack
+rgb.ColInf <- stack(
+  nir,           # NIR as red
+  AarhusReg[[1]], # Red as green
+  AarhusReg[[2]]  # Green as blue
+)
+
+# Plot
+plotRGB(rgb.ColInf,
+        r = 1, g = 2, b = 3,
+        scale = 65535,
+        stretch = "lin",
+        axes = TRUE,
+        main = "Landsat - Aarhus\nColor Infrared"
+)
+```
+
+## Short-Wave Infrared
+
+**Bands**: SWIR-2 (7), SWIR-1 (6), Red (4)\
+**Purpose**: Vegetation and soil analysis
+
+```{r shortwave_infrared}
+# Load and crop SWIR bands
+swir1 <- raster("./Data/LC08_L1TP_196021_20190629_20200827_02_T1_B6.TIF")
+swir1 <- crop(x = swir1, y = boundary)
+
+swir2 <- raster("./Data/LC08_L1TP_196021_20190629_20200827_02_T1_B7.TIF")
+swir2 <- crop(x = swir2, y = boundary)
+
+# Create SWIR stack
+rgb.SwInf <- stack(swir2, swir1, AarhusReg[[1]])
+
+# Plot
+plotRGB(rgb.SwInf,
+        r = 1, g = 2, b = 3,
+        scale = 65535,
+        stretch = "lin",
+        axes = TRUE,
+        main = "Landsat - Aarhus\nShort-Wave Infrared"
+)
+```
+
+## Agriculture Composite
+
+**Bands**: SWIR-1 (6), NIR (5), Blue (2)\
+**Purpose**: Crop monitoring
+
+```{r agriculture}
+# Create Agriculture stack
+rgb.Agro <- stack(
+  swir1,           # SWIR-1 as red
+  nir,           # NIR as green
+  AarhusReg[[3]]  # Blue as blue
+)
+
+# Plot
+plotRGB(rgb.Agro,
+        r = 1, g = 2, b = 3,
+        scale = 65535,
+        stretch = "lin",
+        axes = TRUE,
+        main = "Landsat - Aarhus\nAgriculture"
+)
+```
+
+**Question 8:** In the Agriculture composite, what color indicates
+healthy vegetation?
+
+-   Green, because we put the infrared band as the green band - and
+    healthy vegetation strongly reflects infrared.
+
+------------------------------------------------------------------------
+
+# Calculating Vegetation Indices
+
+## Understanding NDVI
+
+The Normalized Difference Vegetation Index (NDVI) is a proxy for
+vegetation greenness and health:
+
+$$NDVI = \frac{NIR - Red}{NIR + Red}$$
+
+-   **Range**: -1 to +1
+-   **Water/Bare soil**: \< 0.2
+-   **Sparse vegetation**: 0.2 - 0.5
+-   **Dense vegetation**: \> 0.5
+
+**Important**: Use **Level 2 Surface Reflectance** data (L2SP), not raw
+Level 1 data, for accurate indices.
+
+## Computing NDVI
+
+```{r calculate_ndvi}
+# Load surface reflectance bands (Level 2)
+red_sr <- raster("./Data/LC08_L2SP_196021_20190629_20200827_02_T1_SR_B4.TIF")
+nir_sr <- raster("./Data/LC08_L2SP_196021_20190629_20200827_02_T1_SR_B5.TIF")
+
+# Crop to area of interest
+red_sr <- crop(x = red_sr, y = boundary)
+nir_sr <- crop(x = nir_sr, y = boundary)
+
+# Calculate NDVI using raster algebra
+NDVI <- (nir_sr - red_sr) / (nir_sr + red_sr)
+
+# Set negative values to NA (water, clouds)
+NDVI[NDVI < 0] <- NA
+
+# load viridis color palettes
+install.packages("viridis")
+library(viridis)
+
+# Define color palettes
+colors_vir <- viridis(256)
+colors_divergent <- colorRampPalette(c("brown4", "white", "darkcyan"))(255) # used later for difference image
+
+# Plot NDVI
+plot(NDVI,
+     zlim = c(0, 0.6),
+     col = colors_vir,
+     colNA = "black",
+     main = "NDVI - Aarhus (2019)"
+)
+```
+
+**Question 9:** What do the different colors represent in the NDVI map?
+
+-   Dark/purple colors represent water bodies and buildings.
+    Blue/turqoise colors represent sparse vegetation. Green/yellow
+    colors represent dense vegetation.
+
+------------------------------------------------------------------------
+
+## Change Detection: NDVI Comparison
+
+Let's compare NDVI between 1989 (Landsat 5) and 2019 (Landsat 8). What
+do you expect to see?
+
+-   Perhaps more infrastructure, urban development, but also more water
+    bodies (like Egå Engsø) and changes in some areas from agriculture
+    to natural areas and vice versa.
+
+### Loading Historical Data
+
+```{r load_1989}
+# Load 1989 Landsat 5 bands (note different band numbers!)
+# Landsat 5: Band 3 = Red, Band 4 = NIR
+red_sr.1989 <- raster("./Data/LT05_L2SP_196021_19890626_20200916_02_T1_SR_B3.TIF")
+nir_sr.1989 <- raster("./Data/LT05_L2SP_196021_19890626_20200916_02_T1_SR_B4.TIF")
+
+# Crop to boundary
+red_sr.1989 <- crop(red_sr.1989, boundary)
+nir_sr.1989 <- crop(nir_sr.1989, boundary)
+```
+
+### Calculating 1989 NDVI
+
+```{r ndvi_1989}
+# Calculate NDVI for 1989
+NDVI.1989 <- (nir_sr.1989 - red_sr.1989) / (nir_sr.1989 + red_sr.1989)
+
+# Remove negative values
+NDVI.1989[NDVI.1989 < 0] <- NA
+```
+
+### Computing Change
+
+```{r ndvi_change}
+# Calculate NDVI difference
+NDVI.difference <- NDVI - NDVI.1989
+
+# Plot 2019 NDVI
+plot(NDVI,
+     zlim = c(0, 0.6),
+     col = colors_vir,
+     colNA = "black",
+     main = "NDVI 2019"
+)
+
+# Plot 1989 NDVI
+plot(NDVI.1989,
+     zlim = c(0, 0.6),
+     col = colors_vir,
+     colNA = "black",
+     main = "NDVI 1989"
+)
+
+# Plot difference
+plot(NDVI.difference,
+     zlim = c(-0.4, 0.4),
+     col = colors_divergent,
+     colNA = "black",
+     main = "NDVI Difference\n[2019 - 1989]"
+)
+```
+
+**Question 10:** What patterns do you observe in the NDVI difference
+map? What might explain these changes?
+
+-   Generally small increases in NDVI across urban areas, with some
+    well-defined areas having very high increases in NDVI - these are
+    probably some recently naturalized areas.
+
+-   High decreases in larger well-defined areas outside most of urban
+    development, probably agricultural expansion into natural areas or
+    urban expansion into agriculture/natural areas.

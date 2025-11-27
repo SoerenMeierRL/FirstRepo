@@ -1,0 +1,115 @@
+---
+title: "Week 1 Practical"
+author: "Søren Meier"
+date: "`r Sys.Date()`"
+bibliography: "TestBibTex.bib"
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#Loading packages
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(tidyverse)
+```
+
+# Why use `R` in Ecology
+
+::: {.alert .alert-info}
+## Abstract
+
+The programming language R is widely used in many fields. We explored the extent of reported R use in the field of ecology using the Web of Science and text mining. We analyzed the frequencies of R packages reported in more than 60,000 peer-reviewed articles published in 30 ecology journals during a 10-yr period ending in 2017. The number of studies reported using R as their primary tool in data analysis increased linearly from 11.4% in 2008 to 58.0% in 2017. The top 10 packages reported were `lme4`, `vegan`, `nlme`, `ape`, `MuMIn`, `MASS`, `mgcv`, `ade4`, `multcomp`, and `car`. The increasing popularity of R has most likely furthered open science in ecological research because it can improve reproducibility of analyses and captures workflows when scripts and codes are included and shared. These findings may not be entirely unique to `R` because there are other programming languages used by ecologists, but they do strongly suggest that given the relatively high frequency of reported use of R, it is a significant component of contemporary analytics in the field of ecology.
+:::
+
+## Analysis
+
+### Analysis section - Load and explore the data.
+
+```{r data_load_articles}
+#Load the data
+Articles_Use <- read.csv("./Data/Articles_Use.csv")
+
+#Check if import was correct
+head(Articles_Use)
+
+#Check names of columns in data
+names(Articles_Use)
+
+#Check structure of data
+str(Articles_Use)
+
+#Estimate total number of research articles evaluated
+total_articles <- sum(Articles_Use$Total_Number_Articles, na.rm = TRUE)
+
+#Average, minimum, and maximum number of articles
+average_articles <- mean(Articles_Use$Total_Number_Articles, na.rm = TRUE)
+min_articles <- min(Articles_Use$Total_Number_Articles, na.rm = TRUE)
+max_articles <- max(Articles_Use$Total_Number_Articles, na.rm = TRUE)
+
+#Journal with highest number of articles
+journal_articles_top <- Articles_Use$Journal[(Articles_Use$Total_Number_Articles == max(Articles_Use$Total_Number_Articles, na.rm = TRUE))]
+
+#Rank journals by IF in descending order
+journal_ranking_if <- Articles_Use[order(Articles_Use$IF_2017,decreasing=T),c("IF_2017", "Journal", "Total_Number_Articles")]
+
+#Print journal ranking in a table
+knitr::kable(journal_ranking_if, caption = "Journals ranked by IF (impact factor)")
+```
+
+### Analysis section - Your First Analysis
+
+```{r data_load_percentageArticles}
+#Load the data
+MeanPercent2008_2017 <- read.csv("./Data/MeanPercent2008_2017.csv")
+
+#Check if data was loaded correctly
+str(MeanPercent2008_2017)
+
+#Determine Pearson correlation between Year and R percentage usage
+correlation_result <- cor.test(MeanPercent2008_2017$Year,
+                                MeanPercent2008_2017$Articles.Using.R)
+correlation_result
+```
+
+```{r fig-lmModel, fig.cap ="Articles using R percentage from 2008 to 2017"}
+#Fitting a linear model to the data
+Model.1 <- lm(Articles.Using.R ~ Year, # The regression 
+                 data = MeanPercent2008_2017) # The data
+
+#Extracting the annual rate of increase (slope coefficient) from the linear model
+annual_rate_increase <- coef(Model.1)[2]
+annual_rate_increase
+
+#Plotting the relationship between Year and Percentage
+plot(Articles.Using.R ~ Year, data = MeanPercent2008_2017)
+abline(Model.1,  # The linear model object
+          col = "red",  # The color of the line
+          lty = 2)     # A dashed line type
+   
+```
+
+### Analysis section - Add a Figure from an Image File
+
+```{r figure_imagefile, fig.cap="PopularPackages image"}
+
+knitr::include_graphics("./Data/PopularPackages.png")
+
+```
+
+### Analysis section - Create a Table
+
+```{r}
+
+```
+
+| **Package Short Name** | **Package Long Name** | **Package Citation** |
+|----------------|------------------|---------------------------------------|
+| `base` | R: A Language and Environment for Statistical Computing | @BaseR|
